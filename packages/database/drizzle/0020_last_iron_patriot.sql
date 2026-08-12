@@ -1,0 +1,1 @@
+CREATE INDEX "media_assets_user_kind_created_idx" ON "media_assets" USING btree ("user_id","kind","created_at");

@@ -1,0 +1,43 @@
+{
+  "name": "chaoren-media-ai",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "predev": "node scripts/assert-node-runtime.mjs",
+    "predev:full": "node scripts/assert-node-runtime.mjs",
+    "build": "turbo build",
+    "dev": "concurrently --kill-others-on-fail --names packages,apps \"pnpm dev:packages\" \"pnpm dev:apps\"",
+    "dev:full": "concurrently --kill-others-on-fail --names packages,apps \"pnpm dev:packages\" \"pnpm dev:apps:full\"",
+    "dev:packages": "turbo dev:package",
+    "dev:apps": "nodemon --quiet --watch packages --ext js --delay 300ms --signal SIGTERM --exec \"turbo dev --filter=@chaoren/web --filter=@chaoren/api --filter=@chaoren/worker\"",
+    "dev:apps:full": "nodemon --quiet --watch packages --ext js --delay 300ms --signal SIGTERM --exec \"turbo dev --filter=@chaoren/web --filter=@chaoren/api --filter=@chaoren/worker\"",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "verify:release": "pnpm verify && pnpm test:integration && pnpm test:e2e:state",
+    "test:integration": "pnpm --filter @chaoren/api test:integration && pnpm --filter @chaoren/worker test:integration",
+    "test:e2e:state": "pnpm --filter @chaoren/web exec playwright test --grep async-state",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "infra:up": "docker compose up -d postgres redis",
+    "infra:down": "docker compose down",
+    "db:generate": "pnpm --filter @chaoren/database db:generate",
+    "db:migrate": "pnpm --filter @chaoren/database db:migrate",
+    "db:backfill-upload-hashes": "pnpm --filter @chaoren/database db:backfill-upload-hashes"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.1",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.7.4",
+    "turbo": "^2.8.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.56.1"
+  }
+}

@@ -1,0 +1,1 @@
+CREATE INDEX "conversation_messages_session_turn_idx" ON "conversation_messages" USING btree ("session_id","turn_number");

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "conversation_sessions_user_agent_uidx" ON "conversation_sessions" USING btree ("user_id","agent_id") WHERE "conversation_sessions"."agent_id" is not null;

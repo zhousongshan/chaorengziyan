@@ -1,0 +1,37 @@
+{
+  "name": "@chaoren/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev:package": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src drizzle.config.ts",
+    "test": "vitest run --passWithNoTests",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:backfill-upload-hashes": "tsx scripts/backfill-upload-content-hashes.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.1",
+    "postgres": "^3.4.8",
+    "@chaoren/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.8",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.0"
+  }
+}

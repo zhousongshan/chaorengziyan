@@ -1,0 +1,3 @@
+ALTER TABLE "requirement_runs" ADD COLUMN "parent_requirement_run_id" uuid;--> statement-breakpoint
+ALTER TABLE "requirement_runs" ADD CONSTRAINT "requirement_runs_parent_requirement_run_id_requirement_runs_id_fk" FOREIGN KEY ("parent_requirement_run_id") REFERENCES "public"."requirement_runs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "requirement_runs_parent_id_idx" ON "requirement_runs" USING btree ("parent_requirement_run_id");

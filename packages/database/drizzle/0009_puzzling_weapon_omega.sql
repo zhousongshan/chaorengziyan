@@ -1,0 +1,3 @@
+ALTER TABLE "subject_consistency_checks" ADD COLUMN "deliverable_asset_id" uuid;--> statement-breakpoint
+ALTER TABLE "subject_consistency_checks" ADD CONSTRAINT "subject_consistency_checks_deliverable_asset_id_media_assets_id_fk" FOREIGN KEY ("deliverable_asset_id") REFERENCES "public"."media_assets"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "subject_checks_deliverable_asset_id_idx" ON "subject_consistency_checks" USING btree ("deliverable_asset_id");

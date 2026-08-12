@@ -1,0 +1,2 @@
+DROP INDEX "conversation_messages_session_turn_role_uidx";--> statement-breakpoint
+CREATE UNIQUE INDEX "conversation_messages_session_turn_role_uidx" ON "conversation_messages" USING btree ("session_id","turn_number","role") WHERE "conversation_messages"."status" <> 'failed';
