@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src test",
     "test": "vitest run",
+    "pretest:integration": "pnpm --filter @chaoren/database db:migrate:test",
     "test:integration": "RUN_WORKER_INTEGRATION_TESTS=1 vitest run test/*.integration.test.ts"
   },
   "dependencies": {

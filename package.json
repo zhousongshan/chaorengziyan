@@ -7,17 +7,19 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "predev": "node scripts/assert-node-runtime.mjs",
-    "predev:full": "node scripts/assert-node-runtime.mjs",
+    "predev": "node scripts/assert-node-runtime.mjs && node scripts/check-database-migration-contract.mjs && node scripts/check-dev-processes.mjs",
+    "predev:full": "node scripts/assert-node-runtime.mjs && node scripts/check-database-migration-contract.mjs && node scripts/check-dev-processes.mjs",
+    "prebuild": "node scripts/check-database-migration-contract.mjs && node scripts/check-dev-processes.mjs",
     "build": "turbo build",
     "dev": "concurrently --kill-others-on-fail --names packages,apps \"pnpm dev:packages\" \"pnpm dev:apps\"",
     "dev:full": "concurrently --kill-others-on-fail --names packages,apps \"pnpm dev:packages\" \"pnpm dev:apps:full\"",
     "dev:packages": "turbo dev:package",
     "dev:apps": "nodemon --quiet --watch packages --ext js --delay 300ms --signal SIGTERM --exec \"turbo dev --filter=@chaoren/web --filter=@chaoren/api --filter=@chaoren/worker\"",
     "dev:apps:full": "nodemon --quiet --watch packages --ext js --delay 300ms --signal SIGTERM --exec \"turbo dev --filter=@chaoren/web --filter=@chaoren/api --filter=@chaoren/worker\"",
+    "pretypecheck": "node scripts/check-database-migration-contract.mjs && node scripts/check-dev-processes.mjs",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
-    "lint": "turbo lint",
+    "lint": "node scripts/check-database-migration-contract.mjs && turbo lint",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "verify:release": "pnpm verify && pnpm test:integration && pnpm test:e2e:state",
     "test:integration": "pnpm --filter @chaoren/api test:integration && pnpm --filter @chaoren/worker test:integration",
@@ -28,6 +30,7 @@
     "infra:down": "docker compose down",
     "db:generate": "pnpm --filter @chaoren/database db:generate",
     "db:migrate": "pnpm --filter @chaoren/database db:migrate",
+    "db:migrate:test": "pnpm --filter @chaoren/database db:migrate:test",
     "db:backfill-upload-hashes": "pnpm --filter @chaoren/database db:backfill-upload-hashes"
   },
   "devDependencies": {

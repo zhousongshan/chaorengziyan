@@ -8,7 +8,7 @@ const baseReadiness = {
   service: "chaoren-api",
   timestamp: "2026-08-08T08:00:00.000Z",
   nodeVersion: "24.19.0",
-  checks: { database: true, redis: true, imageWorker: true }
+  checks: { database: true, databaseSchema: true, redis: true, imageWorker: true }
 } as const;
 
 describe("HealthController", () => {

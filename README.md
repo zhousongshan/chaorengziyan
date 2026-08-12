@@ -27,14 +27,17 @@ packages/storage     媒体存储端口和本地适配器
 
 ## 本地启动
 
-1. 安装 Node.js 24 和 pnpm 11。
+1. 安装 Node.js 24 和 pnpm 11。仓库的 `.nvmrc` 固定为 Node 24，使用 nvm 时先运行
+   `nvm use`。启动脚本会拒绝 Node 24 以外的运行时。
 2. 将 `.env.example` 复制为 `.env`，当前仓库已提供本地默认值。
 3. 启动 PostgreSQL 和 Redis。可安装 Docker Desktop 后运行 `pnpm infra:up`；本机也可运行
    `brew services start postgresql@17`，并用 `brew install redis && brew services start redis`
    启动Redis。
 4. 首次启动或数据库结构更新后运行 `pnpm db:migrate`。
-5. 运行 `pnpm dev` 启动 Web 与 API。
-6. 运行 `pnpm dev:full`，同时启动 Web、API 和独立 Worker。
+5. 运行 `pnpm dev` 启动 Web、API 和 Worker。启动前会校验迁移契约并拒绝重复的项目进程或
+   `3000/3001` 端口冲突；发现旧进程时先停止旧进程，不要重复启动。
+6. API 和 Worker 会在启动时校验数据库迁移版本与哈希。如果提示数据库迁移不兼容，先备份数据库和
+   `.local-data/media`，再运行 `pnpm db:migrate`，不要绕过校验。
 
 地址：
 
@@ -243,7 +246,7 @@ GET /api/v1/image-generations/<taskId>/subject-consistency-events
 数据库Repository集成测试：
 
 先在 `.env` 配置独立的 `TEST_DATABASE_URL`。测试会拒绝连接普通开发数据库，数据库名称需包含
-`test` 标识。
+`test` 标识。下列命令会先自动迁移测试库，并校验最新迁移版本与哈希；不要跳过它直接运行 Vitest。
 
 ```bash
 pnpm --filter @chaoren/api test:integration

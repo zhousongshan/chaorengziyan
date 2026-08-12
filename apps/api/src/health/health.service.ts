@@ -7,7 +7,7 @@ import {
   type Environment,
   type ReadinessResponse
 } from "@chaoren/contracts";
-import type { DatabaseConnection } from "@chaoren/database";
+import { getDatabaseMigrationStatus, type DatabaseConnection } from "@chaoren/database";
 
 import { DATABASE_CONNECTION } from "../database/database.constants.js";
 import { ENVIRONMENT } from "../environment.js";
@@ -29,10 +29,15 @@ export class HealthService implements OnModuleDestroy {
 
   public async readiness(): Promise<ReadinessResponse> {
     const [databaseResult, redisResult] = await Promise.allSettled([
-      this.database.db.execute(sql`select 1`),
+      Promise.all([
+        this.database.db.execute(sql`select 1`),
+        getDatabaseMigrationStatus(this.database.db)
+      ]),
       this.redis.ping()
     ]);
     const database = databaseResult.status === "fulfilled";
+    const databaseSchema =
+      databaseResult.status === "fulfilled" && databaseResult.value[1].compatible;
     const redis = redisResult.status === "fulfilled" && redisResult.value === "PONG";
     let imageWorker = false;
     if (redis) {
@@ -43,11 +48,11 @@ export class HealthService implements OnModuleDestroy {
       );
     }
     return {
-      status: database && redis && imageWorker ? "ready" : "not_ready",
+      status: database && databaseSchema && redis && imageWorker ? "ready" : "not_ready",
       service: "chaoren-api",
       timestamp: new Date().toISOString(),
       nodeVersion: process.versions.node,
-      checks: { database, redis, imageWorker }
+      checks: { database, databaseSchema, redis, imageWorker }
     };
   }
 

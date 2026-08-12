@@ -17,6 +17,7 @@ export const readinessResponseSchema = z
     checks: z
       .object({
         database: z.boolean(),
+        databaseSchema: z.boolean(),
         redis: z.boolean(),
         imageWorker: z.boolean()
       })

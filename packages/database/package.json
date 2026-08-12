@@ -19,6 +19,7 @@
     "test": "vitest run --passWithNoTests",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:test": "tsx scripts/migrate-test.ts",
     "db:backfill-upload-hashes": "tsx scripts/backfill-upload-content-hashes.ts"
   },
   "dependencies": {

@@ -459,7 +459,7 @@ describe.skipIf(!enabled)("PostgreSQL repositories", () => {
           assets: [],
           request: toConversationTurnRequest(request, 2, staleIdempotencyKey, "这条消息先失败")
         })
-      ).resolves.toMatchObject({ status: "duplicate", message: { id: staleMessageId } });
+      ).resolves.toEqual({ status: "idempotency_conflict" });
 
       const taskRepository = new DrizzleImageGenerationTaskRepository(connection);
       const rootCreatedAt = new Date(now);
@@ -709,6 +709,8 @@ describe.skipIf(!enabled)("PostgreSQL repositories", () => {
         userId,
         projectId: ids.project,
         kind: "image",
+        origin: "uploaded",
+        contentSha256: null,
         storageKey: `test/${ids.sourceAsset}.png`,
         mimeType: "image/png",
         byteSize: 10,
@@ -730,6 +732,8 @@ describe.skipIf(!enabled)("PostgreSQL repositories", () => {
         userId,
         projectId: ids.project,
         kind: "image",
+        origin: "generated",
+        contentSha256: null,
         storageKey: `test/${ids.outputAsset}.png`,
         mimeType: "image/png",
         byteSize: 20,
@@ -1001,6 +1005,8 @@ describe.skipIf(!enabled)("PostgreSQL repositories", () => {
           userId,
           projectId: ids.project,
           kind: "image" as const,
+          origin: id === ids.uploaded ? ("uploaded" as const) : ("generated" as const),
+          contentSha256: null,
           storageKey: `integration/${ids.project}/${id}.png`,
           mimeType: "image/png",
           byteSize: 128,

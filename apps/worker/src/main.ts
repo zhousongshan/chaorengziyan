@@ -12,7 +12,7 @@ import {
   type ImageGenerationUnitJobData,
   type SubjectConsistencyJobData
 } from "@chaoren/contracts";
-import { createDatabase } from "@chaoren/database";
+import { assertDatabaseMigrationCurrent, createDatabase } from "@chaoren/database";
 import {
   ByteDanceImageAdapter,
   ImageGenerationRouter,
@@ -44,6 +44,12 @@ if (environment.OUTBOUND_HTTP_PROXY_URL) {
   setGlobalDispatcher(new ProxyAgent(environment.OUTBOUND_HTTP_PROXY_URL));
 }
 const database = createDatabase(environment.DATABASE_URL);
+try {
+  await assertDatabaseMigrationCurrent(database.db);
+} catch (error) {
+  await database.close();
+  throw error;
+}
 const runCoordinator = new CreationRunCoordinator(database);
 const storage = new LocalStorageAdapter(await resolveWorkspacePath(environment.LOCAL_STORAGE_ROOT));
 const taskStore = new DrizzleImageGenerationTaskStore(database);

@@ -171,6 +171,8 @@ describe.skipIf(!enabled)("BullMQ image generation flow", () => {
         userId,
         projectId: ids.project,
         kind: "image",
+        origin: "uploaded",
+        contentSha256: null,
         storageKey: storedSource.key,
         mimeType: "image/png",
         byteSize: storedSource.byteSize,

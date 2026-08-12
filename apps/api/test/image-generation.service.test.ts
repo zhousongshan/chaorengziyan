@@ -648,6 +648,8 @@ async function createRegenerationSubject(options?: {
   await subject.assetRepository.save({
     ...asset,
     userId,
+    origin: "generated",
+    contentSha256: null,
     originalFileName: "source-result.png"
   });
   const sourceUnit: NonNullable<ImageGenerationTaskRecord["units"]>[number] = {
@@ -755,5 +757,11 @@ function mediaAsset(id: string): MediaAsset {
 
 async function saveSource(repository: InMemoryMediaAssetRepository, id: string): Promise<void> {
   const asset = mediaAsset(id);
-  await repository.save({ ...asset, userId, originalFileName: `${id}.png` });
+  await repository.save({
+    ...asset,
+    userId,
+    origin: "uploaded",
+    contentSha256: null,
+    originalFileName: `${id}.png`
+  });
 }

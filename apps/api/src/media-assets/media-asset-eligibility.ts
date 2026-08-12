@@ -1,4 +1,5 @@
 import { and, eq, exists, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { generationTaskOutputs, mediaAssets, type Database } from "@chaoren/database";
 
@@ -16,9 +17,10 @@ export function generatedAssetIsDeliverable(database: Database, assetId: SQLWrap
 }
 
 export function assetIsProductAvailable(database: Database, assetId: SQLWrapper): SQL<boolean> {
+  const uploadedMediaAssets = alias(mediaAssets, "uploaded_media_assets");
   const uploadedAsset = database
     .select({ value: sql`1` })
-    .from(mediaAssets)
-    .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.origin, "uploaded")));
+    .from(uploadedMediaAssets)
+    .where(and(eq(uploadedMediaAssets.id, assetId), eq(uploadedMediaAssets.origin, "uploaded")));
   return sql<boolean>`${or(exists(uploadedAsset), generatedAssetIsDeliverable(database, assetId))}`;
 }

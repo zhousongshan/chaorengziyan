@@ -1,6 +1,10 @@
 import { Global, Module } from "@nestjs/common";
 
-import { createDatabase, type DatabaseConnection } from "@chaoren/database";
+import {
+  assertDatabaseMigrationCurrent,
+  createDatabase,
+  type DatabaseConnection
+} from "@chaoren/database";
 import type { Environment } from "@chaoren/contracts";
 
 import { ENVIRONMENT } from "../environment.js";
@@ -13,8 +17,16 @@ import { DatabaseLifecycleService } from "./database-lifecycle.service.js";
     {
       provide: DATABASE_CONNECTION,
       inject: [ENVIRONMENT],
-      useFactory: (environment: Environment): DatabaseConnection =>
-        createDatabase(environment.DATABASE_URL)
+      useFactory: async (environment: Environment): Promise<DatabaseConnection> => {
+        const connection = createDatabase(environment.DATABASE_URL);
+        try {
+          await assertDatabaseMigrationCurrent(connection.db);
+          return connection;
+        } catch (error) {
+          await connection.close();
+          throw error;
+        }
+      }
     },
     DatabaseLifecycleService
   ],

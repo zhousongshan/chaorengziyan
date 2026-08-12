@@ -79,6 +79,8 @@ describe.skipIf(!enabled)("Creation Run reconciliation", () => {
         userId: ids.user,
         projectId: ids.project,
         kind: "image",
+        origin: "generated",
+        contentSha256: null,
         storageKey: `integration/${ids.asset}.png`,
         mimeType: "image/png",
         byteSize: 1,

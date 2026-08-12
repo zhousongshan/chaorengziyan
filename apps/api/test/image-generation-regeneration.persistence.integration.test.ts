@@ -319,7 +319,7 @@ describe.skipIf(!enabled)("Image regeneration PostgreSQL transaction", () => {
       fixture.ids.assets.push(nextAssetId);
       await activeConnection.db
         .insert(mediaAssets)
-        .values(mediaAssetRow(fixture, nextAssetId, "first-regeneration.png"));
+        .values(mediaAssetRow(fixture, nextAssetId, "first-regeneration.png", "generated"));
       await activeConnection.db
         .update(creationRuns)
         .set({ status: "terminal", updatedAt: new Date() })
@@ -456,10 +456,10 @@ async function createFixture(): Promise<Fixture> {
     await connection.db
       .insert(mediaAssets)
       .values([
-        mediaAssetRow(fixture, ids.productAsset, "product.png"),
-        mediaAssetRow(fixture, ids.sourceOutputs[0], "output-1.png"),
-        mediaAssetRow(fixture, ids.sourceOutputs[1], "output-2.png"),
-        mediaAssetRow(fixture, ids.repairedAsset, "repaired.png")
+        mediaAssetRow(fixture, ids.productAsset, "product.png", "uploaded"),
+        mediaAssetRow(fixture, ids.sourceOutputs[0], "output-1.png", "generated"),
+        mediaAssetRow(fixture, ids.sourceOutputs[1], "output-2.png", "generated"),
+        mediaAssetRow(fixture, ids.repairedAsset, "repaired.png", "generated")
       ]);
     await connection.db.insert(requirementRuns).values({
       id: ids.requirement,
@@ -758,12 +758,19 @@ function childResult(): RequirementResult {
   };
 }
 
-function mediaAssetRow(fixture: Fixture, id: string, fileName: string) {
+function mediaAssetRow(
+  fixture: Fixture,
+  id: string,
+  fileName: string,
+  origin: "uploaded" | "generated"
+) {
   return {
     id,
     userId: fixture.ids.user,
     projectId: fixture.ids.project,
     kind: "image" as const,
+    origin,
+    contentSha256: null,
     storageKey: `integration/${fixture.ids.project}/${id}.png`,
     mimeType: "image/png",
     byteSize: 128,
