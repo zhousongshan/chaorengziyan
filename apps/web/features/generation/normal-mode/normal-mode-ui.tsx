@@ -1,8 +1,5 @@
 import {
-  Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Images,
   ImageUp,
   LoaderCircle,
@@ -70,11 +67,8 @@ export function NormalModeComposer({
   optimizationPending,
   onModelChange,
   onOptimize,
-  onApplyOptimization,
-  onRestoreOriginal,
-  onAlternative,
-  onReviseOptimization,
-  onDismissOptimization,
+  onUndoOptimization,
+  onOptimizeAgain,
   onPaste,
   onDraggingChange,
   onFileChange,
@@ -99,11 +93,8 @@ export function NormalModeComposer({
   optimizationPending: boolean;
   onModelChange: (modelId: string) => void;
   onOptimize: () => void;
-  onApplyOptimization: () => void;
-  onRestoreOriginal: () => void;
-  onAlternative: () => void;
-  onReviseOptimization: (instruction: string) => void;
-  onDismissOptimization: () => void;
+  onUndoOptimization: () => void;
+  onOptimizeAgain: () => void;
   onPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
   onDraggingChange: (dragging: boolean) => void;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -113,8 +104,6 @@ export function NormalModeComposer({
   onRemoveLocalImage: (index: number) => void;
 }>) {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
-  const [revisionOpen, setRevisionOpen] = useState(false);
-  const [revisionInstruction, setRevisionInstruction] = useState("");
   return (
     <div className={styles.composerCard} data-dragging={isDragging || undefined} onPaste={onPaste}>
       <input
@@ -252,92 +241,22 @@ export function NormalModeComposer({
       </div>
 
       {optimization && (
-        <section className={styles.optimizationPanel} aria-label="提示词优化结果">
-          <header>
-            <span>
+        <section className={styles.optimizationPanel} aria-label="提示词优化操作">
+          <span>
+            <WandSparkles />
+            {optimization.pending ? "正在优化" : "已优化"}
+          </span>
+          {optimization.error && <p>{optimization.error}</p>}
+          <div>
+            <button type="button" disabled={optimization.pending} onClick={onUndoOptimization}>
+              <Undo2 />
+              撤回
+            </button>
+            <button type="button" disabled={optimization.pending} onClick={onOptimizeAgain}>
               <WandSparkles />
-              提示词优化
-            </span>
-            <button type="button" aria-label="关闭提示词优化结果" onClick={onDismissOptimization}>
-              <X />
+              再次优化
             </button>
-          </header>
-          <div className={styles.optimizationCompare}>
-            <article>
-              <small>原文</small>
-              <p>{optimization.originalText}</p>
-            </article>
-            <article data-active>
-              <small>优化稿</small>
-              <p>{optimization.optimizedText}</p>
-            </article>
           </div>
-          {optimization.stale && (
-            <p className={styles.optimizationWarning}>当前文字、图片或设置已变化，请重新优化。</p>
-          )}
-          {optimization.error && <p className={styles.optimizationWarning}>{optimization.error}</p>}
-          {revisionOpen && (
-            <div className={styles.optimizationRevision}>
-              <input
-                type="text"
-                maxLength={2_000}
-                value={revisionInstruction}
-                placeholder="例如：更简洁一些，强调自然光和商品材质"
-                disabled={optimization.pending}
-                onChange={(event) => setRevisionInstruction(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-                  event.preventDefault();
-                  const instruction = revisionInstruction.trim();
-                  if (!instruction) return;
-                  onReviseOptimization(instruction);
-                }}
-              />
-              <button
-                type="button"
-                disabled={optimization.pending || !revisionInstruction.trim()}
-                onClick={() => {
-                  const instruction = revisionInstruction.trim();
-                  if (instruction) onReviseOptimization(instruction);
-                }}
-              >
-                修改
-              </button>
-            </div>
-          )}
-          <footer>
-            <div>
-              <button type="button" disabled={optimization.pending} onClick={onRestoreOriginal}>
-                <Undo2 />
-                恢复原文
-              </button>
-              <button
-                type="button"
-                disabled={optimization.pending || optimization.stale}
-                onClick={onAlternative}
-              >
-                <ChevronLeft />
-                换一种表达
-                <ChevronRight />
-              </button>
-              <button
-                type="button"
-                disabled={optimization.pending || optimization.stale}
-                onClick={() => setRevisionOpen((open) => !open)}
-              >
-                按要求修改
-              </button>
-            </div>
-            <button
-              className={styles.applyOptimizationButton}
-              type="button"
-              disabled={optimization.pending || optimization.stale}
-              onClick={onApplyOptimization}
-            >
-              {optimization.pending ? <LoaderCircle className="spin" /> : <Check />}
-              {optimization.pending ? "正在优化" : "采用优化稿"}
-            </button>
-          </footer>
         </section>
       )}
 
@@ -391,10 +310,7 @@ export function NormalModeComposer({
 }
 
 export type PromptOptimizationComposerState = {
-  originalText: string;
-  optimizedText: string;
   pending: boolean;
-  stale: boolean;
   error: string | null;
 };
 

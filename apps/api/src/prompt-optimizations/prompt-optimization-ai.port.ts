@@ -1,5 +1,6 @@
 import type {
   CreatePromptOptimizationRequest,
+  PromptOptimizationCandidateImage,
   PromptOptimizationOperation
 } from "@chaoren/contracts";
 
@@ -7,8 +8,9 @@ export const PROMPT_OPTIMIZATION_AI_PORT = Symbol("PROMPT_OPTIMIZATION_AI_PORT")
 
 export interface PromptOptimizationImage {
   key: string;
-  role: CreatePromptOptimizationRequest["attachments"][number]["role"];
+  role: PromptOptimizationCandidateImage["role"];
   relation: string | null;
+  source: PromptOptimizationCandidateImage["source"];
   mimeType: string;
   content: Buffer;
 }

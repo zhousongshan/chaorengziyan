@@ -1,6 +1,7 @@
 import type {
   CreatePromptOptimizationRequest,
   PromptOptimization,
+  PromptOptimizationImageDecisionStatus,
   PromptOptimizationInputRevision
 } from "@chaoren/contracts";
 
@@ -49,6 +50,8 @@ export interface PromptOptimizationRepository {
     userId: string;
     executionToken: string;
     optimizedText: string;
+    imageDecisionStatus: PromptOptimizationImageDecisionStatus;
+    selectedImageKeys: string[];
     aiModel: string;
     promptVersion: string;
     completedAt: string;
@@ -58,6 +61,8 @@ export interface PromptOptimizationRepository {
     userId: string;
     executionToken: string;
     errorCode: string;
+    imageDecisionStatus?: Extract<PromptOptimizationImageDecisionStatus, "missing" | "ambiguous">;
+    selectedImageKeys: string[];
     completedAt: string;
   }): Promise<PromptOptimizationRecord | undefined>;
 }

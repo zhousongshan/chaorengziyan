@@ -239,6 +239,13 @@
       "when": 1786522493222,
       "tag": "0033_moaning_mad_thinker",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786589219276,
+      "tag": "0034_solid_raider",
+      "breakpoints": true
     }
   ]
 }

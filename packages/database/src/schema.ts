@@ -95,6 +95,10 @@ export const promptOptimizationStatus = pgEnum("prompt_optimization_status", [
   "succeeded",
   "failed"
 ]);
+export const promptOptimizationImageDecisionStatus = pgEnum(
+  "prompt_optimization_image_decision_status",
+  ["not_needed", "resolved", "missing", "ambiguous"]
+);
 
 export const projects = pgTable(
   "projects",
@@ -396,6 +400,8 @@ export const promptOptimizations = pgTable(
     executionToken: uuid("execution_token").notNull(),
     originalText: text("original_text").notNull(),
     optimizedText: text("optimized_text"),
+    imageDecisionStatus: promptOptimizationImageDecisionStatus("image_decision_status"),
+    selectedImageKeys: jsonb("selected_image_keys").notNull().default([]),
     revisionInstruction: text("revision_instruction"),
     inputRevision: jsonb("input_revision").notNull(),
     aiModel: text("ai_model"),

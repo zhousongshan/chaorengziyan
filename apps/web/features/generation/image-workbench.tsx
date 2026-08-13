@@ -136,9 +136,12 @@ type PendingTurn = { text: string; previewUrls: string[]; createdAt: string };
 type EditResultTarget = { asset: MediaAssetResponse; name: string };
 type PromptOptimizationUiState = {
   record: PromptOptimization;
-  rootOriginalText: string;
   contextSignature: string;
-  adopted: boolean;
+  history: Array<{
+    text: string;
+    record: PromptOptimization | null;
+    contextSignature: string | null;
+  }>;
   error: string | null;
 };
 type WorkbenchComposerProps = Omit<
@@ -691,6 +694,11 @@ export function ImageWorkbench() {
     referenceAssetIds?: string[];
     watermarkAssetId?: string;
     promptOptimizationId?: string;
+    attachments?: Array<{
+      assetId: string;
+      role: "product_source" | "user_reference" | "edit_base";
+      relation: string | null;
+    }>;
   }) => {
     const effectiveWatermarkAssetId =
       input.watermarkAssetId ??
@@ -743,7 +751,7 @@ export function ImageWorkbench() {
       agentInstruction,
       clearProductImage: productCleared,
       clearReferenceImages: referenceCleared,
-      attachments: [
+      attachments: input.attachments ?? [
         ...(editBaseImage?.assetId
           ? [
               {
@@ -812,6 +820,8 @@ export function ImageWorkbench() {
       const session = await ensureConversation(project.id, text);
       const effectiveReferenceAssetIds = [...restoredReferenceAssetIds, ...localReferenceAssetIds];
       const submissionContextSignature = createPromptOptimizationContextSignature({
+        agentInstruction,
+        sessionVersion: session.version,
         modelId: formValues.modelId,
         imageCount: formValues.imageCount,
         aspectRatio: formValues.aspectRatio,
@@ -823,12 +833,16 @@ export function ImageWorkbench() {
         referencePrompt
       });
       const adoptedOptimizationId =
-        promptOptimization?.adopted &&
+        promptOptimization &&
         promptOptimization.record.status === "succeeded" &&
         promptOptimization.record.optimizedText === text &&
         promptOptimization.contextSignature === submissionContextSignature
           ? promptOptimization.record.id
           : undefined;
+      const adoptedOptimization = adoptedOptimizationId ? promptOptimization : null;
+      const optimizationAttachments = adoptedOptimization
+        ? selectedPromptOptimizationAttachments(adoptedOptimization.record)
+        : undefined;
       return sendConversationTurn({
         session,
         formValues,
@@ -838,7 +852,8 @@ export function ImageWorkbench() {
           ? { referenceAssetIds: effectiveReferenceAssetIds }
           : {}),
         ...(watermarkAssetId ? { watermarkAssetId } : {}),
-        ...(adoptedOptimizationId ? { promptOptimizationId: adoptedOptimizationId } : {})
+        ...(adoptedOptimizationId ? { promptOptimizationId: adoptedOptimizationId } : {}),
+        ...(optimizationAttachments ? { attachments: optimizationAttachments } : {})
       });
     },
     onSuccess: (response) => {
@@ -1503,6 +1518,8 @@ export function ImageWorkbench() {
     watermarkLogo?.previewUrl ??
     (restoredWatermarkAssetId ? apiClient.mediaContentUrl(restoredWatermarkAssetId) : null);
   const currentOptimizationContextSignature = createPromptOptimizationContextSignature({
+    agentInstruction,
+    sessionVersion: activeConversationSession?.version ?? 0,
     modelId: selectedModelId,
     imageCount,
     aspectRatio,
@@ -1517,18 +1534,19 @@ export function ImageWorkbench() {
     ),
     referencePrompt
   });
-  const optimizationStale = Boolean(
-    promptOptimization &&
-    (promptOptimization.contextSignature !== currentOptimizationContextSignature ||
-      ![
-        promptOptimization.rootOriginalText,
-        promptOptimization.record.originalText,
-        ...(promptOptimization.adopted && promptOptimization.record.optimizedText
-          ? [promptOptimization.record.optimizedText]
-          : [])
-      ].includes(form.getValues("userText").trim()))
-  );
 
+  useEffect(() => {
+    const record = promptOptimizationQuery.data;
+    if (
+      record?.status === "succeeded" &&
+      record.optimizedText &&
+      record.id === promptOptimization?.record.id &&
+      promptOptimization.contextSignature === currentOptimizationContextSignature &&
+      form.getValues("userText").trim() === record.originalText
+    ) {
+      form.setValue("userText", record.optimizedText, { shouldDirty: true });
+    }
+  }, [currentOptimizationContextSignature, form, promptOptimization, promptOptimizationQuery.data]);
   const runPromptOptimization = async (input: {
     operation: "optimize" | "alternative" | "revise";
     revisionInstruction?: string;
@@ -1540,7 +1558,7 @@ export function ImageWorkbench() {
       setUploadError("请输入文字后再优化提示词");
       return;
     }
-    if (input.operation !== "optimize" && (!promptOptimization || optimizationStale)) return;
+    if (input.operation !== "optimize" && !promptOptimization) return;
     const project = activeProjectQuery.data;
     if (!project) {
       setUploadError("当前创作项目尚未就绪，请稍后重试");
@@ -1561,9 +1579,10 @@ export function ImageWorkbench() {
         onUploaded: markReferenceImageUploaded
       });
       const session = await ensureConversation(project.id, text);
-      const operationText =
-        input.operation === "optimize" ? text : promptOptimization!.record.optimizedText!;
+      const operationText = text;
       const contextSignature = createPromptOptimizationContextSignature({
+        agentInstruction,
+        sessionVersion: session.version,
         modelId: formValues.modelId,
         imageCount: formValues.imageCount,
         aspectRatio: formValues.aspectRatio,
@@ -1607,15 +1626,25 @@ export function ImageWorkbench() {
           visualStyle: formValues.style
         },
         modelId: formValues.modelId,
+        agentInstruction,
         parentOptimizationId: input.operation === "optimize" ? null : promptOptimization!.record.id,
         revisionInstruction: input.operation === "revise" ? input.revisionInstruction! : null
       });
+      const previousState = promptOptimization;
+      const nextHistory = previousState
+        ? [
+            ...previousState.history,
+            {
+              text,
+              record: previousState.record,
+              contextSignature: previousState.contextSignature
+            }
+          ]
+        : [{ text, record: null, contextSignature: null }];
       setPromptOptimization({
         record,
-        rootOriginalText:
-          input.operation === "optimize" ? text : promptOptimization!.rootOriginalText,
         contextSignature,
-        adopted: false,
+        history: nextHistory,
         error: null
       });
       if (record.status === "processing") setPromptOptimizationPending(false);
@@ -1815,42 +1844,33 @@ export function ImageWorkbench() {
               optimization={
                 promptOptimization
                   ? {
-                      originalText: promptOptimization.rootOriginalText,
-                      optimizedText:
-                        promptOptimization.record.optimizedText ??
-                        promptOptimization.record.originalText,
                       pending:
                         promptOptimizationPending ||
                         promptOptimization.record.status === "processing",
-                      stale: optimizationStale,
                       error: promptOptimization.error
                     }
                   : null
               }
               optimizationPending={promptOptimizationPending}
               onOptimize={() => void runPromptOptimization({ operation: "optimize" })}
-              onApplyOptimization={() => {
-                const optimizedText = promptOptimization?.record.optimizedText;
-                if (!optimizedText || optimizationStale) return;
-                form.setValue("userText", optimizedText, { shouldDirty: true });
-                setPromptOptimization((current) =>
-                  current ? { ...current, adopted: true, error: null } : current
+              onUndoOptimization={() => {
+                const previous = promptOptimization?.history.at(-1);
+                if (!previous) return;
+                form.setValue("userText", previous.text, { shouldDirty: true });
+                const remaining = promptOptimization!.history.slice(0, -1);
+                setPromptOptimization(
+                  previous.record
+                    ? {
+                        record: previous.record,
+                        contextSignature:
+                          previous.contextSignature ?? currentOptimizationContextSignature,
+                        history: remaining,
+                        error: null
+                      }
+                    : null
                 );
               }}
-              onRestoreOriginal={() => {
-                if (!promptOptimization) return;
-                form.setValue("userText", promptOptimization.rootOriginalText, {
-                  shouldDirty: true
-                });
-                setPromptOptimization((current) =>
-                  current ? { ...current, adopted: false, error: null } : current
-                );
-              }}
-              onAlternative={() => void runPromptOptimization({ operation: "alternative" })}
-              onReviseOptimization={(revisionInstruction) =>
-                void runPromptOptimization({ operation: "revise", revisionInstruction })
-              }
-              onDismissOptimization={() => setPromptOptimization(null)}
+              onOptimizeAgain={() => void runPromptOptimization({ operation: "alternative" })}
             />
 
             <NormalModeReferencePanel
@@ -3445,6 +3465,8 @@ function clearConversationIdempotency(sessionId: string, key: string) {
 }
 
 function createPromptOptimizationContextSignature(input: {
+  agentInstruction: string;
+  sessionVersion: number;
   modelId: string;
   imageCount: number;
   aspectRatio: string;
@@ -3456,6 +3478,27 @@ function createPromptOptimizationContextSignature(input: {
   referencePrompt: string;
 }): string {
   return JSON.stringify(input);
+}
+
+function selectedPromptOptimizationAttachments(record: PromptOptimization) {
+  const candidates = new Map(
+    record.inputRevision.candidateImages.map((candidate) => [candidate.key, candidate])
+  );
+  const attachments = record.selectedImageKeys.flatMap((key) => {
+    const candidate = candidates.get(key);
+    if (!candidate) return [];
+    const role = ["generated_result", "selected_result"].includes(candidate.role)
+      ? ("edit_base" as const)
+      : candidate.role;
+    if (!["product_source", "user_reference", "edit_base"].includes(role)) return [];
+    return [{ assetId: candidate.assetId, role, relation: candidate.relation }];
+  });
+  const unique = new Map(attachments.map((item) => [`${item.assetId}:${item.role}`, item]));
+  return [...unique.values()] as Array<{
+    assetId: string;
+    role: "product_source" | "user_reference" | "edit_base";
+    relation: string | null;
+  }>;
 }
 
 function useProgressiveText(value: string) {

@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 
 import type { Environment } from "@chaoren/contracts";
 
+import { AgentModule } from "../agents/agent.module.js";
 import { ConversationModule } from "../conversations/conversation.module.js";
 import { ENVIRONMENT } from "../environment.js";
 import { ImageModelModule } from "../image-models/image-model.module.js";
@@ -14,7 +15,7 @@ import { PROMPT_OPTIMIZATION_REPOSITORY } from "./prompt-optimization.repository
 import { PromptOptimizationService } from "./prompt-optimization.service.js";
 
 @Module({
-  imports: [ConversationModule, ImageModelModule, MediaAssetModule],
+  imports: [AgentModule, ConversationModule, ImageModelModule, MediaAssetModule],
   controllers: [PromptOptimizationController],
   providers: [
     PromptOptimizationService,

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { and, asc, desc, eq, gt, inArray, lt, lte, sql } from "drizzle-orm";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   conversationMemoryEntries,
@@ -9,6 +9,8 @@ import {
   conversationSessions,
   conversationStateSnapshots,
   conversationTurnRuns,
+  generationTaskOutputs,
+  mediaAssets,
   promptOptimizations,
   requirementRuns,
   type DatabaseConnection
@@ -581,7 +583,9 @@ export class DrizzleConversationRepository implements ConversationRepository {
         const [optimization] = await tx
           .select({
             id: promptOptimizations.id,
-            inputRevision: promptOptimizations.inputRevision
+            inputRevision: promptOptimizations.inputRevision,
+            imageDecisionStatus: promptOptimizations.imageDecisionStatus,
+            selectedImageKeys: promptOptimizations.selectedImageKeys
           })
           .from(promptOptimizations)
           .where(
@@ -600,11 +604,59 @@ export class DrizzleConversationRepository implements ConversationRepository {
         const inputRevision = promptOptimizationInputRevisionSchema.safeParse(
           optimization?.inputRevision
         );
+        const selectedImageKeys = parseStringArray(optimization?.selectedImageKeys);
+        const expectedAttachments = inputRevision.success
+          ? resolveOptimizationAttachments(inputRevision.data, selectedImageKeys)
+          : undefined;
+        const expectedAssetIds = expectedAttachments
+          ? [...new Set(expectedAttachments.map((attachment) => attachment.assetId))]
+          : [];
+        const ownedAssets =
+          expectedAssetIds.length > 0
+            ? await tx
+                .select({ id: mediaAssets.id, origin: mediaAssets.origin })
+                .from(mediaAssets)
+                .where(
+                  and(
+                    inArray(mediaAssets.id, expectedAssetIds),
+                    eq(mediaAssets.userId, input.userId),
+                    eq(mediaAssets.projectId, session.projectId),
+                    eq(mediaAssets.kind, "image")
+                  )
+                )
+                .for("update")
+            : [];
+        const generatedAssetIds = ownedAssets
+          .filter((asset) => asset.origin === "generated")
+          .map((asset) => asset.id);
+        const deliverableOutputs =
+          generatedAssetIds.length > 0
+            ? await tx
+                .select({ assetId: generationTaskOutputs.deliverableAssetId })
+                .from(generationTaskOutputs)
+                .where(
+                  and(
+                    inArray(generationTaskOutputs.deliverableAssetId, generatedAssetIds),
+                    eq(generationTaskOutputs.status, "deliverable")
+                  )
+                )
+                .for("update")
+            : [];
+        const deliverableAssetIds = new Set(
+          deliverableOutputs.flatMap((output) => (output.assetId ? [output.assetId] : []))
+        );
         if (
           !optimization ||
           !inputRevision.success ||
-          JSON.stringify(inputRevision.data.attachments) !==
-            JSON.stringify(input.request.attachments) ||
+          !expectedAttachments ||
+          ownedAssets.length !== expectedAssetIds.length ||
+          generatedAssetIds.some((assetId) => !deliverableAssetIds.has(assetId)) ||
+          !["not_needed", "resolved"].includes(optimization.imageDecisionStatus ?? "") ||
+          inputRevision.data.stateSnapshotVersion !== session.version ||
+          inputRevision.data.agentId !== session.agentId ||
+          inputRevision.data.agentInstructionHash !==
+            hashText(input.request.agentInstruction ?? "") ||
+          JSON.stringify(expectedAttachments) !== JSON.stringify(input.request.attachments) ||
           JSON.stringify(inputRevision.data.imageSettings) !==
             JSON.stringify(input.request.imageSettings) ||
           inputRevision.data.modelId !== input.request.modelId
@@ -1214,6 +1266,40 @@ function toSnapshot(
     state: conversationStateSchema.parse(row.state),
     createdAt: row.createdAt.toISOString()
   };
+}
+
+function resolveOptimizationAttachments(
+  revision: ReturnType<typeof promptOptimizationInputRevisionSchema.parse>,
+  selectedImageKeys: string[]
+) {
+  const candidates = new Map(
+    revision.candidateImages.map((candidate) => [candidate.key, candidate])
+  );
+  const selected = selectedImageKeys.map((key) => candidates.get(key));
+  if (selected.some((candidate) => !candidate)) return undefined;
+  const attachments = selected.map((candidate) => {
+    const value = candidate!;
+    const role = ["generated_result", "selected_result"].includes(value.role)
+      ? ("edit_base" as const)
+      : value.role;
+    return { assetId: value.assetId, role, relation: value.relation };
+  });
+  const byIdentity = new Map(attachments.map((item) => [`${item.assetId}:${item.role}`, item]));
+  const unique = [...byIdentity.values()];
+  if (unique.filter((item) => item.role === "edit_base").length > 1) return undefined;
+  if (unique.filter((item) => item.role === "product_source").length > 4) return undefined;
+  if (unique.filter((item) => item.role === "user_reference").length > 1) return undefined;
+  return unique;
+}
+
+function parseStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value.trim()).digest("hex");
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

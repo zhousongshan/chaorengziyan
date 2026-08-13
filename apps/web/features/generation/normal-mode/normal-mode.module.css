@@ -377,141 +377,58 @@
 }
 
 .optimizationPanel {
-  margin-top: 10px;
-  padding: 12px;
-  border: 1px solid #dedafc;
-  border-radius: 8px;
-  background: #fbfaff;
-}
-
-.optimizationPanel > header,
-.optimizationPanel > footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  min-height: 38px;
+  margin-top: 8px;
+  padding: 6px 8px 6px 10px;
   gap: 10px;
+  border: 1px solid #e2e5eb;
+  border-radius: 7px;
+  background: #fafbfc;
 }
 
-.optimizationPanel > header > span {
+.optimizationPanel > span {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  color: #4f46e5;
-  font-size: 13px;
-  font-weight: 850;
-}
-
-.optimizationPanel > header svg,
-.optimizationPanel > footer svg {
-  width: 15px;
-  height: 15px;
-}
-
-.optimizationPanel > header > button {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  place-items: center;
-  border: 0;
-  color: #667085;
-  background: transparent;
-}
-
-.optimizationCompare {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 10px 0;
-  gap: 8px;
-}
-
-.optimizationCompare article {
-  min-width: 0;
-  padding: 10px 11px;
-  border: 1px solid #e4e7ec;
-  border-radius: 7px;
-  background: #fff;
-}
-
-.optimizationCompare article[data-active] {
-  border-color: #c8c3ff;
-  background: #f7f6ff;
-}
-
-.optimizationCompare small {
-  display: block;
-  margin-bottom: 6px;
-  color: #667085;
-  font-size: 11px;
+  gap: 6px;
+  color: #344054;
+  font-size: 12px;
   font-weight: 800;
 }
 
-.optimizationCompare p {
-  max-height: 132px;
+.optimizationPanel > p {
+  min-width: 0;
   margin: 0;
-  overflow-y: auto;
-  color: #344054;
-  font-size: 13px;
-  line-height: 1.65;
-  white-space: pre-wrap;
+  flex: 1;
+  color: #b54708;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
-.optimizationWarning {
-  margin: 8px 0;
-  color: #b54708;
-  font-size: 12px;
-}
-
-.optimizationRevision {
+.optimizationPanel > div {
   display: flex;
-  margin: 10px 0;
-  gap: 7px;
-}
-
-.optimizationRevision input {
-  min-width: 0;
-  min-height: 36px;
-  flex: 1;
-  padding: 0 10px;
-  border: 1px solid #d0d5dd;
-  border-radius: 7px;
-  outline: 0;
-  background: #fff;
-  font-size: 12px;
-}
-
-.optimizationRevision input:focus {
-  border-color: #aaa4ff;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08);
-}
-
-.optimizationRevision button,
-.optimizationPanel > footer button {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 10px;
+  margin-left: auto;
   gap: 5px;
+}
+
+.optimizationPanel button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 8px;
+  gap: 4px;
   border: 1px solid #d9dce3;
-  border-radius: 7px;
+  border-radius: 6px;
   color: #475467;
   background: #fff;
   font-size: 11px;
   font-weight: 750;
 }
 
-.optimizationPanel > footer > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.optimizationPanel > footer .applyOptimizationButton {
-  border-color: #4f46e5;
-  color: #fff;
-  background: #4f46e5;
+.optimizationPanel svg {
+  width: 14px;
+  height: 14px;
 }
 
 .optimizationPanel button:disabled {
@@ -1150,13 +1067,14 @@
     flex-direction: column;
   }
 
-  .optimizationCompare {
-    grid-template-columns: 1fr;
+  .optimizationPanel {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
-  .optimizationPanel > footer {
-    align-items: stretch;
-    flex-direction: column;
+  .optimizationPanel > p {
+    flex-basis: 100%;
+    order: 3;
   }
 
   .generateButton {

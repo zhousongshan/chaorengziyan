@@ -125,6 +125,20 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "重新选择",
     retryable: false
   },
+  PROMPT_OPTIMIZATION_IMAGE_REQUIRED: {
+    title: "需要选择图片",
+    message: "当前文字提到了图片，但没有找到对应图片，请先选择需要处理的图片。",
+    action: "replace_image",
+    actionLabel: "选择图片",
+    retryable: false
+  },
+  PROMPT_OPTIMIZATION_IMAGE_AMBIGUOUS: {
+    title: "需要确认目标图片",
+    message: "当前文字可能指向多张图片，请明确选择需要处理的图片。",
+    action: "replace_image",
+    actionLabel: "选择图片",
+    retryable: false
+  },
   PROMPT_OPTIMIZATION_PARENT_NOT_AVAILABLE: {
     title: "上一版优化结果已失效",
     message: "当前输入已经变化，请重新发起提示词优化。",

@@ -7,12 +7,48 @@ export const promptOptimizationOperationSchema = z.enum(["optimize", "alternativ
 
 export const promptOptimizationStatusSchema = z.enum(["processing", "succeeded", "failed"]);
 
+export const promptOptimizationImageDecisionStatusSchema = z.enum([
+  "not_needed",
+  "resolved",
+  "missing",
+  "ambiguous"
+]);
+
+export const promptOptimizationCandidateImageSchema = z
+  .object({
+    key: z.string().trim().min(1).max(100),
+    assetId: z.uuid(),
+    role: z.enum([
+      "product_source",
+      "user_reference",
+      "edit_base",
+      "generated_result",
+      "selected_result"
+    ]),
+    relation: z.string().trim().min(1).max(1_000).nullable().default(null),
+    source: z.enum([
+      "explicit",
+      "active_context",
+      "selected_result",
+      "recent_result",
+      "referenced_turn"
+    ])
+  })
+  .strict();
+
 export const promptOptimizationInputRevisionSchema = z
   .object({
     text: z.string().max(12_000),
     attachments: z.array(createConversationMessageAttachmentSchema).max(6),
     imageSettings: requirementImageSettingsSchema,
     modelId: z.string().trim().min(1).max(100),
+    agentId: z.uuid().optional(),
+    agentInstruction: z.string().trim().max(1_000).optional(),
+    agentInstructionHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    candidateImages: z.array(promptOptimizationCandidateImageSchema).max(12).default([]),
     stateSnapshotId: z.uuid().optional(),
     stateSnapshotVersion: z.number().int().nonnegative().optional()
   })
@@ -26,6 +62,7 @@ export const createPromptOptimizationRequestSchema = z
     attachments: z.array(createConversationMessageAttachmentSchema).max(6).default([]),
     imageSettings: requirementImageSettingsSchema.default({}),
     modelId: z.string().trim().min(1).max(100),
+    agentInstruction: z.string().trim().max(1_000).optional(),
     parentOptimizationId: z.uuid().nullable().default(null),
     revisionInstruction: z.string().trim().min(1).max(2_000).nullable().default(null)
   })
@@ -110,12 +147,20 @@ export const promptOptimizationSchema = z
     adoptedMessageId: z.uuid().nullable(),
     errorCode: z.string().nullable(),
     createdAt: z.iso.datetime(),
-    completedAt: z.iso.datetime().nullable()
+    completedAt: z.iso.datetime().nullable(),
+    imageDecisionStatus: promptOptimizationImageDecisionStatusSchema.nullable().default(null),
+    selectedImageKeys: z.array(z.string().trim().min(1).max(100)).max(12).default([])
   })
   .strict();
 
 export type PromptOptimizationOperation = z.infer<typeof promptOptimizationOperationSchema>;
 export type PromptOptimizationStatus = z.infer<typeof promptOptimizationStatusSchema>;
+export type PromptOptimizationImageDecisionStatus = z.infer<
+  typeof promptOptimizationImageDecisionStatusSchema
+>;
+export type PromptOptimizationCandidateImage = z.infer<
+  typeof promptOptimizationCandidateImageSchema
+>;
 export type PromptOptimizationInputRevision = z.infer<typeof promptOptimizationInputRevisionSchema>;
 export type CreatePromptOptimizationRequest = z.infer<typeof createPromptOptimizationRequestSchema>;
 export type PromptOptimization = z.infer<typeof promptOptimizationSchema>;

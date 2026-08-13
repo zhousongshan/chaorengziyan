@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import type { CreatePromptOptimizationRequest } from "@chaoren/contracts";
+import {
+  promptOptimizationImageDecisionStatusSchema,
+  type CreatePromptOptimizationRequest
+} from "@chaoren/contracts";
 
 import { parseExplicitOutputQuantity } from "../requirements/output-quantity.parser.js";
 import { PROMPT_OPTIMIZATION_CONTRACT_VERSION } from "./prompt-optimization.prompt.js";
@@ -8,8 +11,13 @@ import { PROMPT_OPTIMIZATION_CONTRACT_VERSION } from "./prompt-optimization.prom
 const outputSchema = z
   .object({
     contractVersion: z.literal(PROMPT_OPTIMIZATION_CONTRACT_VERSION),
-    optimizedText: z.string().trim().min(1).max(12_000),
-    usedImageKeys: z.array(z.string().trim().min(1).max(100)).max(6)
+    imageDecision: z
+      .object({
+        status: promptOptimizationImageDecisionStatusSchema,
+        selectedImageKeys: z.array(z.string().trim().min(1).max(100)).max(12)
+      })
+      .strict(),
+    optimizedText: z.string().trim().min(1).max(12_000).nullable()
   })
   .strict();
 
@@ -18,10 +26,21 @@ export interface PromptOptimizationValidationContext {
   maxImageCount: number;
   allowedAspectRatios: string[];
   availableImageKeys: string[];
+  explicitImageKeys: string[];
+  candidateImages: Array<{
+    key: string;
+    role:
+      "product_source" | "user_reference" | "edit_base" | "generated_result" | "selected_result";
+  }>;
 }
 
 export type PromptOptimizationValidationResult =
-  | { success: true; optimizedText: string }
+  | {
+      success: true;
+      optimizedText: string | null;
+      imageDecisionStatus: "not_needed" | "resolved" | "missing" | "ambiguous";
+      selectedImageKeys: string[];
+    }
   | { success: false; issues: Array<{ field: string; message: string }> };
 
 export function validatePromptOptimizationOutput(
@@ -40,15 +59,79 @@ export function validatePromptOptimizationOutput(
   }
 
   const issues: Array<{ field: string; message: string }> = [];
-  if (JSON.stringify(parsed.data.usedImageKeys) !== JSON.stringify(context.availableImageKeys)) {
+  const selectedImageKeys = parsed.data.imageDecision.selectedImageKeys;
+  const selectedSet = new Set(selectedImageKeys);
+  if (selectedSet.size !== selectedImageKeys.length) {
     issues.push({
-      field: "usedImageKeys",
-      message: "图片句柄必须与程序提供的图片保持相同顺序且不能遗漏或新增"
+      field: "imageDecision.selectedImageKeys",
+      message: "图片句柄不能重复"
     });
   }
+  if (selectedImageKeys.some((key) => !context.availableImageKeys.includes(key))) {
+    issues.push({
+      field: "imageDecision.selectedImageKeys",
+      message: "图片句柄必须来自程序提供的合法候选"
+    });
+  }
+  const decisionStatus = parsed.data.imageDecision.status;
+  if (decisionStatus === "resolved" && selectedImageKeys.length === 0) {
+    issues.push({ field: "imageDecision", message: "resolved 必须选择至少一张合法图片" });
+  }
+  if (decisionStatus !== "resolved" && selectedImageKeys.length > 0) {
+    issues.push({ field: "imageDecision", message: "只有 resolved 可以选择图片" });
+  }
+  if (decisionStatus === "resolved" && parsed.data.optimizedText === null) {
+    issues.push({ field: "optimizedText", message: "resolved 必须返回完整优化稿" });
+  }
+  if (decisionStatus === "not_needed" && parsed.data.optimizedText === null) {
+    issues.push({ field: "optimizedText", message: "not_needed 必须返回完整优化稿" });
+  }
+  if (["missing", "ambiguous"].includes(decisionStatus) && parsed.data.optimizedText !== null) {
+    issues.push({ field: "optimizedText", message: "图片缺失或指代不明确时不能返回优化稿" });
+  }
+  if (
+    context.explicitImageKeys.length > 0 &&
+    (decisionStatus !== "resolved" ||
+      !startsWithSequence(selectedImageKeys, context.explicitImageKeys))
+  ) {
+    issues.push({
+      field: "imageDecision.selectedImageKeys",
+      message: "用户本轮明确附带的图片必须全部按原顺序使用"
+    });
+  }
+  const candidatesByKey = new Map(
+    context.candidateImages.map((candidate) => [candidate.key, candidate])
+  );
+  const selectedCandidates = selectedImageKeys.flatMap((key) => {
+    const candidate = candidatesByKey.get(key);
+    return candidate ? [candidate] : [];
+  });
+  if (selectedCandidates.filter((candidate) => candidate.role === "product_source").length > 4) {
+    issues.push({ field: "imageDecision.selectedImageKeys", message: "最多只能选择四张商品原图" });
+  }
+  if (selectedCandidates.filter((candidate) => candidate.role === "user_reference").length > 1) {
+    issues.push({ field: "imageDecision.selectedImageKeys", message: "最多只能选择一张参考图" });
+  }
+  if (
+    selectedCandidates.filter((candidate) =>
+      ["edit_base", "generated_result", "selected_result"].includes(candidate.role)
+    ).length > 1
+  ) {
+    issues.push({ field: "imageDecision.selectedImageKeys", message: "每次只能选择一个编辑目标" });
+  }
+  if (parsed.data.optimizedText === null) {
+    return issues.length > 0
+      ? { success: false, issues }
+      : {
+          success: true,
+          optimizedText: null,
+          imageDecisionStatus: decisionStatus,
+          selectedImageKeys
+        };
+  }
 
-  const sourceImageCount = context.request.attachments.filter(
-    (attachment) => attachment.role === "product_source"
+  const sourceImageCount = selectedCandidates.filter(
+    (candidate) => candidate.role === "product_source"
   ).length;
   const expectedQuantity = resolveExpectedQuantity(context.request, sourceImageCount);
   const outputQuantity = parseExplicitOutputQuantity(parsed.data.optimizedText, sourceImageCount);
@@ -91,7 +174,16 @@ export function validatePromptOptimizationOutput(
 
   return issues.length > 0
     ? { success: false, issues }
-    : { success: true, optimizedText: parsed.data.optimizedText };
+    : {
+        success: true,
+        optimizedText: parsed.data.optimizedText,
+        imageDecisionStatus: decisionStatus,
+        selectedImageKeys
+      };
+}
+
+function startsWithSequence(values: string[], required: string[]): boolean {
+  return required.every((value, index) => values[index] === value);
 }
 
 export function validatePromptOptimizationInput(

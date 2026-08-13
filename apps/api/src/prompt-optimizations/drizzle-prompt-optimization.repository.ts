@@ -47,12 +47,7 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
         const parentRevision = promptOptimizationInputRevisionSchema.safeParse(
           parent?.inputRevision
         );
-        if (
-          !parent ||
-          !parentRevision.success ||
-          parent.optimizedText !== input.request.text ||
-          !sameRevisionContext(parentRevision.data, input.inputRevision)
-        ) {
+        if (!parent || !parentRevision.success || parent.optimizedText === null) {
           return { status: "parent_not_available" as const };
         }
       }
@@ -82,9 +77,9 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
         .returning();
 
       if (created) {
-        if (input.request.attachments.length > 0) {
+        if (input.inputRevision.candidateImages.length > 0) {
           await tx.insert(promptOptimizationAssets).values(
-            input.request.attachments.map((attachment, position) => ({
+            input.inputRevision.candidateImages.map((attachment, position) => ({
               optimizationId: created.id,
               assetId: attachment.assetId,
               role: attachment.role,
@@ -159,6 +154,8 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
     userId: string;
     executionToken: string;
     optimizedText: string;
+    imageDecisionStatus: "not_needed" | "resolved";
+    selectedImageKeys: string[];
     aiModel: string;
     promptVersion: string;
     completedAt: string;
@@ -168,6 +165,8 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
       .set({
         status: "succeeded",
         optimizedText: input.optimizedText,
+        imageDecisionStatus: input.imageDecisionStatus,
+        selectedImageKeys: input.selectedImageKeys,
         aiModel: input.aiModel,
         promptVersion: input.promptVersion,
         errorCode: null,
@@ -192,6 +191,8 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
     userId: string;
     executionToken: string;
     errorCode: string;
+    imageDecisionStatus?: "missing" | "ambiguous";
+    selectedImageKeys: string[];
     completedAt: string;
   }): Promise<PromptOptimizationRecord | undefined> {
     const [row] = await this.connection.db
@@ -199,6 +200,8 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
       .set({
         status: "failed",
         errorCode: input.errorCode,
+        imageDecisionStatus: input.imageDecisionStatus ?? null,
+        selectedImageKeys: input.selectedImageKeys,
         completedAt: new Date(input.completedAt),
         updatedAt: new Date(input.completedAt)
       })
@@ -216,19 +219,6 @@ export class DrizzlePromptOptimizationRepository implements PromptOptimizationRe
   }
 }
 
-function sameRevisionContext(
-  parent: PromptOptimizationRecord["inputRevision"],
-  child: PromptOptimizationRecord["inputRevision"]
-): boolean {
-  return (
-    JSON.stringify(parent.attachments) === JSON.stringify(child.attachments) &&
-    JSON.stringify(parent.imageSettings) === JSON.stringify(child.imageSettings) &&
-    parent.modelId === child.modelId &&
-    parent.stateSnapshotId === child.stateSnapshotId &&
-    parent.stateSnapshotVersion === child.stateSnapshotVersion
-  );
-}
-
 function toRecord(row: typeof promptOptimizations.$inferSelect): PromptOptimizationRecord {
   const publicRecord: PromptOptimization = {
     id: row.id,
@@ -243,7 +233,9 @@ function toRecord(row: typeof promptOptimizations.$inferSelect): PromptOptimizat
     adoptedMessageId: row.adoptedMessageId,
     errorCode: row.errorCode,
     createdAt: row.createdAt.toISOString(),
-    completedAt: row.completedAt?.toISOString() ?? null
+    completedAt: row.completedAt?.toISOString() ?? null,
+    imageDecisionStatus: row.imageDecisionStatus,
+    selectedImageKeys: parseSelectedImageKeys(row.selectedImageKeys)
   };
   return {
     ...publicRecord,
@@ -255,4 +247,10 @@ function toRecord(row: typeof promptOptimizations.$inferSelect): PromptOptimizat
     promptVersion: row.promptVersion,
     executionToken: row.executionToken
   };
+}
+
+function parseSelectedImageKeys(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 }

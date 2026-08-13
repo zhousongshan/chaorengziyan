@@ -3,9 +3,9 @@ import { sql } from "drizzle-orm";
 import type { Database } from "./client.js";
 
 export const EXPECTED_DATABASE_MIGRATION = {
-  id: 34,
-  tag: "0033_moaning_mad_thinker",
-  hash: "2ad5c049053de533d573a04e301a85ade52240dec551529a1135fd1d8e634993"
+  id: 35,
+  tag: "0034_solid_raider",
+  hash: "0cd01df7214e66338caf9237525c18a9228fe005fca99093bc03130118260d79"
 } as const;
 
 export interface DatabaseMigrationStatus {

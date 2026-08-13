@@ -40,7 +40,7 @@ export class OpenAiCompatiblePromptOptimizationAiAdapter implements PromptOptimi
 
   public repair(input: PromptOptimizationRepairInput): Promise<unknown> {
     return this.complete(
-      `上一次输出未通过程序校验。只能修正 JSON 结构、图片 key、明确数量或比例的保真问题，不得改变用户原意。\n原始输入：${JSON.stringify(toModelInput(input))}\n上一次输出：${JSON.stringify(input.previousOutput)}\n校验问题：${JSON.stringify(input.validationIssues)}\ncontractVersion 必须为 ${PROMPT_OPTIMIZATION_CONTRACT_VERSION}。`,
+      `上一次输出未通过程序校验。只能修正 JSON 结构、图片判断状态、图片 key、明确数量或比例的保真问题，不得改变用户原意。\n原始输入：${JSON.stringify(toModelInput(input))}\n上一次输出：${JSON.stringify(input.previousOutput)}\n校验问题：${JSON.stringify(input.validationIssues)}\ncontractVersion 必须为 ${PROMPT_OPTIMIZATION_CONTRACT_VERSION}。`,
       input.images
     );
   }
@@ -72,7 +72,7 @@ export class OpenAiCompatiblePromptOptimizationAiAdapter implements PromptOptimi
                     ...images.flatMap((image) => [
                       {
                         type: "text",
-                        text: `图片 ${image.key}；角色=${image.role}；关系=${image.relation ?? "未说明"}`
+                        text: `图片 ${image.key}；角色=${image.role}；来源=${image.source}；关系=${image.relation ?? "未说明"}`
                       },
                       {
                         type: "image_url",
@@ -115,7 +115,12 @@ function toModelInput(input: PromptOptimizationAiInput) {
     imageSettings: input.imageSettings,
     limitedContext: input.limitedContext,
     generationModel: input.generationModel,
-    images: input.images.map(({ key, role, relation }) => ({ key, role, relation }))
+    images: input.images.map(({ key, role, source, relation }) => ({
+      key,
+      role,
+      source,
+      relation
+    }))
   };
 }
 
