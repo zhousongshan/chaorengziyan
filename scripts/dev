@@ -1,0 +1,40 @@
+#!/bin/zsh
+
+set -eu
+
+workspace="${0:A:h:h}"
+cd "$workspace"
+
+if ! command -v fnm >/dev/null 2>&1; then
+  echo "未找到 fnm。请先安装 fnm 和 Node.js 24。" >&2
+  exit 1
+fi
+
+eval "$(fnm env --shell zsh)"
+fnm use --silent-if-unchanged 24 >/dev/null
+rehash
+
+if [[ "$(node -p 'process.versions.node.split(`.`)[0]')" != "24" ]]; then
+  echo "无法切换到 Node.js 24。请运行 fnm install 24。" >&2
+  exit 1
+fi
+
+command="${1:-start}"
+case "$command" in
+  start)
+    exec pnpm dev
+    ;;
+  status)
+    exec pnpm dev:status
+    ;;
+  stop)
+    exec pnpm dev:stop
+    ;;
+  clean)
+    exec pnpm dev:clean
+    ;;
+  *)
+    echo "用法: ./scripts/dev [start|status|stop|clean]" >&2
+    exit 1
+    ;;
+esac

@@ -27,15 +27,16 @@ packages/storage     媒体存储端口和本地适配器
 
 ## 本地启动
 
-1. 安装 Node.js 24 和 pnpm 11。仓库的 `.nvmrc` 固定为 Node 24，使用 nvm 时先运行
-   `nvm use`。启动脚本会拒绝 Node 24 以外的运行时。
+1. 安装 fnm、Node.js 24 和 pnpm 11。仓库的 `.nvmrc` 固定为 Node 24，启动入口会使用 fnm
+   显式切换运行时，并拒绝 Node 24 以外的版本。
 2. 将 `.env.example` 复制为 `.env`，当前仓库已提供本地默认值。
 3. 启动 PostgreSQL 和 Redis。可安装 Docker Desktop 后运行 `pnpm infra:up`；本机也可运行
    `brew services start postgresql@17`，并用 `brew install redis && brew services start redis`
    启动Redis。
 4. 首次启动或数据库结构更新后运行 `pnpm db:migrate`。
-5. 运行 `pnpm dev` 启动 Web、API 和 Worker。启动前会校验迁移契约并拒绝重复的项目进程或
-   `3000/3001` 端口冲突；发现旧进程时先停止旧进程，不要重复启动。
+5. 运行 `./scripts/dev start` 启动 Web、API 和 Worker。启动入口会固定使用 Node 24，并在
+   `.local-run` 记录受管进程。启动前会先构建 workspace 包、校验迁移契约，并拒绝重复的项目进程或
+   `3000/3001` 端口冲突；发现旧进程时先停止旧服务，不要重复启动。
 6. API 和 Worker 会在启动时校验数据库迁移版本与哈希。如果提示数据库迁移不兼容，先备份数据库和
    `.local-data/media`，再运行 `pnpm db:migrate`，不要绕过校验。
 
@@ -43,6 +44,19 @@ packages/storage     媒体存储端口和本地适配器
 
 - Web: `http://127.0.0.1:3000`
 - API health: `http://127.0.0.1:3001/api/v1/health`
+- API readiness: `http://127.0.0.1:3001/api/v1/health/ready`
+
+开发服务管理：
+
+```bash
+./scripts/dev status # 同时检查 Web、API、数据库 Schema、Redis 和 Worker
+./scripts/dev stop   # 结束完整开发进程树
+./scripts/dev clean  # 仅清理构建缓存和测试产物，业务数据与备份不会被删除
+```
+
+不要直接删除 `.env`、`.local-data` 或 `backups`。如果 macOS 拒绝访问项目文件并返回
+`Operation not permitted`，应将整个仓库移到 `~/Projects` 等非受保护目录，或为运行工具授予
+“文稿文件夹”访问权限；重复启动进程无法绕过该系统限制。
 
 ## 智能创作 Agent
 

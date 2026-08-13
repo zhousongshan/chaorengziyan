@@ -11,10 +11,6 @@
       "persistent": true,
       "interruptible": true
     },
-    "dev:package": {
-      "cache": false,
-      "persistent": true
-    },
     "typecheck": {
       "dependsOn": ["^build", "^typecheck"]
     },
