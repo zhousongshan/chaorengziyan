@@ -5,6 +5,7 @@ import { environmentSchema, type FinalRequirement } from "@chaoren/contracts";
 
 import { ByteDanceImageAdapter } from "../src/bytedance-image.adapter.js";
 import { buildImageGenerationInstruction } from "../src/image-generation-instruction.js";
+import type { ImageProviderError } from "../src/image-generation.port.js";
 import { OpenAiImageAdapter } from "../src/openai-image.adapter.js";
 import { SafeRemoteImageFetcher } from "../src/safe-remote-image-fetcher.js";
 
@@ -37,6 +38,54 @@ const validPng = Buffer.from(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("image provider adapters", () => {
+  it("classifies relay access denial and preserves bounded diagnostics", async () => {
+    const environment = environmentSchema.parse({
+      ...baseEnvironment,
+      OPENAI_IMAGE_BASE_URL: "https://jennyapi.site/v1",
+      OPENAI_IMAGE_API_KEY: "test-relay-key",
+      OPENAI_IMAGE_MODEL: "gpt-image-2",
+      OPENAI_IMAGE_API_MODE: "async-relay"
+    });
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new UndiciResponse(JSON.stringify({ message: "model permission denied" }), {
+          status: 403,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const adapter = new OpenAiImageAdapter(environment);
+    await expect(
+      adapter.generate({
+        requestId: "access-denied-task",
+        model: {
+          id: "openai-image",
+          name: "GPT 生图",
+          provider: "openai",
+          enabled: true,
+          maxImageCount: 4,
+          supportedAspectRatios: ["1:1"]
+        },
+        requirement,
+        renderSettings,
+        instruction,
+        sources: []
+      })
+    ).rejects.toMatchObject({
+      code: "IMAGE_PROVIDER_ACCESS_DENIED",
+      details: {
+        stage: "submission",
+        retryable: false,
+        diagnostics: {
+          httpStatus: 403,
+          responseBody: expect.stringContaining("permission denied")
+        }
+      }
+    } satisfies Partial<ImageProviderError>);
+  });
+
   it("sends ordered source images to the OpenAI image edits endpoint", async () => {
     const environment = environmentSchema.parse({
       ...baseEnvironment,

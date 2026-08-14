@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -185,8 +186,9 @@ realDescribe(
       expect(providerInstruction).not.toMatch(/小猪|草莓猪|马赛克/);
 
       if (process.env.RUN_REFERENCE_IMAGE_GENERATION_REAL_TESTS === "1") {
+        const requestId = `reference-image-product-rule-real-${randomUUID()}`;
         const generated = await new OpenAiImageAdapter(environment).generate({
-          requestId: "reference-image-product-rule-real-v1",
+          requestId,
           model: getEnabledImageModel(environment, "openai-image"),
           requirement: normalized.data.result.finalRequirement,
           renderSettings: { resolutionPreset: "1k", providerQuality: "high" },

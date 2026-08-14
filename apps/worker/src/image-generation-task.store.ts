@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notExists } from "drizzle-orm";
 
 import {
   conversationMessageAssets,
@@ -46,7 +46,7 @@ export interface WorkerExecutableUnit {
   position: number;
   status?: ImageGenerationStatus;
   instruction: string;
-  requirement?: FinalRequirement;
+  requirement: FinalRequirement;
   outputLayout: string;
   sourceAssets: WorkerSourceAsset[];
   qualitySourceAssetIds?: string[];
@@ -159,7 +159,8 @@ export interface ImageGenerationTaskStore {
     }
   ): Promise<string[]>;
   markUnitFailed(unitId: string, error: ImageGenerationError): Promise<void>;
-  markQueueDeliveryFailed(unitId: string): Promise<void>;
+  markQueueDeliveryFailed(eventId: string, unitId: string): Promise<void>;
+  failUnsupportedLegacyTasks(): Promise<string[]>;
   findRecoverableUnits(): Promise<Array<{ taskId: string; unitId: string }>>;
 }
 
@@ -368,9 +369,13 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
           "生图单元缺少冻结执行指令，不能沿用旧请求重新生成"
         );
       }
-      const unitRequirement = unit.requirementSnapshot
-        ? finalRequirementSchema.parse(unit.requirementSnapshot)
-        : { ...readyRequirement, imageCount: 1 };
+      const unitRequirement = finalRequirementSchema.safeParse(unit.requirementSnapshot);
+      if (!unitRequirement.success) {
+        throw new WorkerTaskDataError(
+          "GENERATION_EXECUTION_PLAN_UNAVAILABLE",
+          "生图单元缺少有效的冻结需求快照，不能沿用当前会话需求执行"
+        );
+      }
       const unitSourceAssets = unitSourceRows
         .filter((source) => source.unitId === unit.id)
         .map((source) => {
@@ -408,7 +413,7 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
                 request.data.deliverySettings.watermark.position
               )}`
             : frozenInstruction,
-        requirement: unitRequirement,
+        requirement: unitRequirement.data,
         outputLayout: unit.outputLayout,
         sourceAssets: unitSourceAssets,
         qualitySourceAssetIds: unitQualitySourceRows
@@ -890,11 +895,141 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
     await this.runCoordinator.finalizeByTaskId(updated.taskId);
   }
 
-  public async markQueueDeliveryFailed(unitId: string): Promise<void> {
-    await this.markUnitFailed(unitId, {
-      code: "IMAGE_GENERATION_QUEUE_UNAVAILABLE",
-      message: "生图任务队列投递失败，已达到自动恢复上限"
+  public async markQueueDeliveryFailed(eventId: string, unitId: string): Promise<void> {
+    let taskId: string | undefined;
+    await this.connection.db.transaction(async (transaction) => {
+      const [event] = await transaction
+        .select({
+          publishedAt: workflowEvents.publishedAt,
+          terminalAt: workflowEvents.terminalAt
+        })
+        .from(workflowEvents)
+        .where(
+          and(
+            eq(workflowEvents.id, eventId),
+            eq(workflowEvents.eventType, "generation.unit.enqueue"),
+            eq(workflowEvents.entityId, unitId)
+          )
+        )
+        .limit(1)
+        .for("update");
+      if (!event || (event.publishedAt && !event.terminalAt)) return;
+
+      const [unit] = await transaction
+        .select({ taskId: generationTaskUnits.taskId, status: generationTaskUnits.status })
+        .from(generationTaskUnits)
+        .where(eq(generationTaskUnits.id, unitId))
+        .limit(1)
+        .for("update");
+      if (unit) {
+        taskId = unit.taskId;
+        if (unit.status === "queued" || unit.status === "running") {
+          await transaction
+            .update(generationTaskUnits)
+            .set({
+              status: "failed",
+              errorCode: "IMAGE_GENERATION_QUEUE_UNAVAILABLE",
+              errorMessage: "生图任务队列投递失败，已达到自动恢复上限",
+              updatedAt: new Date()
+            })
+            .where(eq(generationTaskUnits.id, unitId));
+        }
+        const units = await transaction
+          .select({
+            status: generationTaskUnits.status,
+            errorCode: generationTaskUnits.errorCode,
+            errorMessage: generationTaskUnits.errorMessage
+          })
+          .from(generationTaskUnits)
+          .where(eq(generationTaskUnits.taskId, unit.taskId));
+        const pending = units.some(
+          (candidate) => candidate.status === "queued" || candidate.status === "running"
+        );
+        const succeeded = units.some((candidate) => candidate.status === "succeeded");
+        const firstFailure = units.find((candidate) => candidate.status === "failed");
+        await transaction
+          .update(generationTasks)
+          .set({
+            status: pending ? "running" : succeeded ? "succeeded" : "failed",
+            errorCode:
+              pending || succeeded
+                ? null
+                : (firstFailure?.errorCode ?? "IMAGE_GENERATION_QUEUE_UNAVAILABLE"),
+            errorMessage:
+              pending || succeeded
+                ? null
+                : (firstFailure?.errorMessage ?? "生图任务队列投递失败，已达到自动恢复上限"),
+            updatedAt: new Date()
+          })
+          .where(eq(generationTasks.id, unit.taskId));
+      }
+      await transaction
+        .update(workflowEvents)
+        .set({
+          terminalAt: event.terminalAt ?? new Date(),
+          publishedAt: event.publishedAt ?? new Date(),
+          lastError: "队列投递失败，已达到自动恢复上限"
+        })
+        .where(eq(workflowEvents.id, eventId));
     });
+    if (taskId) await this.runCoordinator.finalizeByTaskId(taskId);
+  }
+
+  public async failUnsupportedLegacyTasks(): Promise<string[]> {
+    const failedTaskIds = await this.connection.db.transaction(async (transaction) => {
+      const rows = await transaction
+        .select({ id: generationTasks.id })
+        .from(generationTasks)
+        .where(
+          and(
+            inArray(generationTasks.status, ["queued", "running"]),
+            notExists(
+              transaction
+                .select({ id: generationTaskUnits.id })
+                .from(generationTaskUnits)
+                .where(eq(generationTaskUnits.taskId, generationTasks.id))
+            )
+          )
+        )
+        .for("update", { skipLocked: true });
+      const taskIds = rows.map((row) => row.id);
+      if (taskIds.length === 0) return [];
+      const message = "历史生图任务缺少新版冻结执行单元，请重新提交当前需求";
+      await transaction
+        .update(generationTasks)
+        .set({
+          status: "failed",
+          errorCode: "GENERATION_PLAN_VERSION_UNSUPPORTED",
+          errorMessage: message,
+          updatedAt: new Date()
+        })
+        .where(inArray(generationTasks.id, taskIds));
+      const repairs = await transaction
+        .select({ checkId: subjectConsistencyRepairs.checkId })
+        .from(subjectConsistencyRepairs)
+        .where(inArray(subjectConsistencyRepairs.generationTaskId, taskIds));
+      const checkIds = repairs.map((repair) => repair.checkId);
+      if (checkIds.length > 0) {
+        await transaction
+          .update(subjectConsistencyChecks)
+          .set({
+            status: "execution_failed",
+            userMessage: message,
+            errorCode: "GENERATION_PLAN_VERSION_UNSUPPORTED",
+            errorMessage: message,
+            updatedAt: new Date()
+          })
+          .where(
+            and(
+              inArray(subjectConsistencyChecks.id, checkIds),
+              inArray(subjectConsistencyChecks.status, ["queued", "running"])
+            )
+          );
+      }
+      return taskIds;
+    });
+    for (const taskId of failedTaskIds) await this.runCoordinator.finalizeByTaskId(taskId);
+    return failedTaskIds;
   }
 
   public async findRecoverableUnits(): Promise<Array<{ taskId: string; unitId: string }>> {

@@ -124,6 +124,7 @@ export interface SubjectConsistencyTaskStore {
     }
   ): Promise<void>;
   markExecutionFailed(checkId: string, error: { code: string; message: string }): Promise<void>;
+  markQueueDeliveryFailed(eventId: string, checkId: string): Promise<void>;
   findRecoverableIds(): Promise<string[]>;
 }
 
@@ -348,9 +349,15 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
           .where(eq(generationTaskUnits.id, check.generationUnitId))
           .limit(1)
       : [];
-    const inspectionRequirement = generationUnit?.requirementSnapshot
-      ? finalRequirementSchema.parse(generationUnit.requirementSnapshot)
-      : requirementResult.data.finalRequirement;
+    const inspectionRequirement = finalRequirementSchema.safeParse(
+      generationUnit?.requirementSnapshot
+    );
+    if (!inspectionRequirement.success) {
+      throw new SubjectConsistencyTaskDataError(
+        "SUBJECT_CHECK_EXECUTION_PLAN_UNAVAILABLE",
+        "主体检查缺少有效的冻结需求快照，不能沿用当前会话需求检查"
+      );
+    }
 
     return {
       id: check.id,
@@ -361,7 +368,7 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
       status: check.status,
       phase: check.phase,
       originalUserText: request.data.userText,
-      originalRequirement: inspectionRequirement,
+      originalRequirement: inspectionRequirement.data,
       sourceProducts: sources.map((source) => ({
         id: source!.id,
         storageKey: source!.storageKey,
@@ -1102,6 +1109,67 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
       await rejectActiveCheckCandidates(transaction, checkId, check.generatedAssetId, error.code);
     });
     await this.runCoordinator.finalizeByCheckId(checkId);
+  }
+
+  public async markQueueDeliveryFailed(eventId: string, checkId: string): Promise<void> {
+    let shouldFinalize = false;
+    await this.connection.db.transaction(async (transaction) => {
+      const [event] = await transaction
+        .select({
+          publishedAt: workflowEvents.publishedAt,
+          terminalAt: workflowEvents.terminalAt
+        })
+        .from(workflowEvents)
+        .where(
+          and(
+            eq(workflowEvents.id, eventId),
+            eq(workflowEvents.eventType, "subject.check.enqueue"),
+            eq(workflowEvents.entityId, checkId)
+          )
+        )
+        .limit(1)
+        .for("update");
+      if (!event || (event.publishedAt && !event.terminalAt)) return;
+
+      const [check] = await transaction
+        .select({
+          status: subjectConsistencyChecks.status,
+          generatedAssetId: subjectConsistencyChecks.generatedAssetId
+        })
+        .from(subjectConsistencyChecks)
+        .where(eq(subjectConsistencyChecks.id, checkId))
+        .limit(1)
+        .for("update");
+      if (check) {
+        shouldFinalize = true;
+        if (check.status === "queued" || check.status === "running") {
+          await transaction
+            .update(subjectConsistencyChecks)
+            .set({
+              status: "execution_failed",
+              errorCode: "SUBJECT_CONSISTENCY_QUEUE_UNAVAILABLE",
+              errorMessage: "图片检查队列投递失败，已达到自动恢复上限",
+              updatedAt: new Date()
+            })
+            .where(eq(subjectConsistencyChecks.id, checkId));
+          await rejectActiveCheckCandidates(
+            transaction,
+            checkId,
+            check.generatedAssetId,
+            "SUBJECT_CONSISTENCY_QUEUE_UNAVAILABLE"
+          );
+        }
+      }
+      await transaction
+        .update(workflowEvents)
+        .set({
+          terminalAt: event.terminalAt ?? new Date(),
+          publishedAt: event.publishedAt ?? new Date(),
+          lastError: "队列投递失败，已达到自动恢复上限"
+        })
+        .where(eq(workflowEvents.id, eventId));
+    });
+    if (shouldFinalize) await this.runCoordinator.finalizeByCheckId(checkId);
   }
 
   public async findRecoverableIds(): Promise<string[]> {

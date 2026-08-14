@@ -223,6 +223,20 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "联系管理员",
     retryable: false
   },
+  IMAGE_PROVIDER_AUTH_FAILED: {
+    title: "生图服务鉴权失败",
+    message: "当前生图服务密钥无效，请联系管理员检查配置。",
+    action: "contact_support",
+    actionLabel: "联系管理员",
+    retryable: false
+  },
+  IMAGE_PROVIDER_ACCESS_DENIED: {
+    title: "生图服务无访问权限",
+    message: "当前账号没有完成本次生图所需的权限，请联系管理员。",
+    action: "contact_support",
+    actionLabel: "联系管理员",
+    retryable: false
+  },
   IMAGE_PROVIDER_UNAVAILABLE: {
     title: "生图服务暂时不可用",
     message: "请稍后重新生成。",
@@ -456,6 +470,13 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "修改需求",
     retryable: false
   },
+  GENERATION_EXECUTION_PLAN_UNAVAILABLE: {
+    title: "本次执行计划不完整",
+    message: "当前图片缺少冻结执行信息，请重新提交需求后生成。",
+    action: "edit_requirement",
+    actionLabel: "重新提交",
+    retryable: false
+  },
   GENERATION_SOURCE_NOT_DELIVERABLE: {
     title: "这张图片暂时不能继续使用",
     message: "该图片尚未通过检查或已被拒绝，请选择可用成品或重新上传商品原图。",
@@ -517,6 +538,13 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     message: "本次任务中的商品与原图关系不一致，请重新选择商品原图后生成。",
     action: "replace_image",
     actionLabel: "重新选择",
+    retryable: false
+  },
+  SUBJECT_CHECK_EXECUTION_PLAN_UNAVAILABLE: {
+    title: "图片检查计划不完整",
+    message: "当前图片缺少生成时的冻结需求，请重新提交需求后生成。",
+    action: "edit_requirement",
+    actionLabel: "重新提交",
     retryable: false
   },
   SUBJECT_CHECK_LINEAGE_NOT_AVAILABLE: {

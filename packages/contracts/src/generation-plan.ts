@@ -161,7 +161,11 @@ export const referenceDesignPlanSchema = z
     copyPlan: copyPlanSchema.optional()
   })
   .strict()
-  .transform(({ copyPlan: _legacyCopyPlan, ...plan }) => plan);
+  .transform((input) => {
+    const plan = { ...input };
+    delete plan.copyPlan;
+    return plan;
+  });
 
 const referenceAnalysisFields = {
   observedDesign: referenceDesignAnalysisSchema,

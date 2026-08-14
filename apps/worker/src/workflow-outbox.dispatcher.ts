@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { workflowEvents, type DatabaseConnection } from "@chaoren/database";
 
@@ -33,6 +33,7 @@ export class WorkflowOutboxDispatcher {
     if (this.dispatching) return;
     this.dispatching = true;
     try {
+      await this.recoverExhausted(limit);
       const events = await this.claim(limit);
       for (const event of events) {
         try {
@@ -50,6 +51,51 @@ export class WorkflowOutboxDispatcher {
       }
     } finally {
       this.dispatching = false;
+    }
+  }
+
+  private async recoverExhausted(limit: number): Promise<void> {
+    const events = await this.connection.db.transaction(async (transaction) => {
+      const rows = await transaction
+        .select({
+          eventId: workflowEvents.id,
+          eventType: workflowEvents.eventType,
+          payload: workflowEvents.payload
+        })
+        .from(workflowEvents)
+        .where(
+          and(
+            isNull(workflowEvents.publishedAt),
+            isNull(workflowEvents.terminalAt),
+            lte(workflowEvents.availableAt, new Date()),
+            gte(workflowEvents.publishAttempts, MAX_PUBLISH_ATTEMPTS),
+            inArray(workflowEvents.eventType, [...dispatchableEventTypes])
+          )
+        )
+        .orderBy(asc(workflowEvents.createdAt))
+        .limit(limit)
+        .for("update", { skipLocked: true });
+      if (rows.length > 0) {
+        await transaction
+          .update(workflowEvents)
+          .set({ availableAt: new Date(Date.now() + 30_000) })
+          .where(
+            inArray(
+              workflowEvents.id,
+              rows.map((row) => row.eventId)
+            )
+          );
+      }
+      return rows.map(toPendingDispatch);
+    });
+
+    for (const event of events) {
+      try {
+        await this.publish(event);
+        await this.markPublished(event.eventId);
+      } catch {
+        await this.markTerminal(event);
+      }
     }
   }
 
@@ -100,16 +146,7 @@ export class WorkflowOutboxDispatcher {
             rows.map((row) => row.eventId)
           )
         );
-      return rows.map((row) => {
-        const payload = asRecord(row.payload);
-        return {
-          eventId: row.eventId,
-          eventType: row.eventType,
-          ...(typeof payload?.taskId === "string" ? { taskId: payload.taskId } : {}),
-          ...(typeof payload?.unitId === "string" ? { unitId: payload.unitId } : {}),
-          ...(typeof payload?.checkId === "string" ? { checkId: payload.checkId } : {})
-        };
-      });
+      return rows.map(toPendingDispatch);
     });
   }
 
@@ -150,21 +187,10 @@ export class WorkflowOutboxDispatcher {
   }
 
   private async markTerminal(event: PendingDispatch): Promise<void> {
-    await this.connection.db
-      .update(workflowEvents)
-      .set({
-        terminalAt: new Date(),
-        publishedAt: new Date(),
-        lastError: "队列投递失败，已达到自动恢复上限"
-      })
-      .where(and(eq(workflowEvents.id, event.eventId), isNull(workflowEvents.terminalAt)));
     if (event.eventType === "generation.unit.enqueue" && event.taskId && event.unitId) {
-      await this.imageTasks.markQueueDeliveryFailed(event.unitId);
+      await this.imageTasks.markQueueDeliveryFailed(event.eventId, event.unitId);
     } else if (event.eventType === "subject.check.enqueue" && event.checkId) {
-      await this.subjectTasks.markExecutionFailed(event.checkId, {
-        code: "SUBJECT_CONSISTENCY_QUEUE_UNAVAILABLE",
-        message: "图片检查队列投递失败，已达到自动恢复上限"
-      });
+      await this.subjectTasks.markQueueDeliveryFailed(event.eventId, event.checkId);
     }
   }
 }
@@ -173,4 +199,19 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function toPendingDispatch(row: {
+  eventId: string;
+  eventType: string;
+  payload: unknown;
+}): PendingDispatch {
+  const payload = asRecord(row.payload);
+  return {
+    eventId: row.eventId,
+    eventType: row.eventType,
+    ...(typeof payload?.taskId === "string" ? { taskId: payload.taskId } : {}),
+    ...(typeof payload?.unitId === "string" ? { unitId: payload.unitId } : {}),
+    ...(typeof payload?.checkId === "string" ? { checkId: payload.checkId } : {})
+  };
 }

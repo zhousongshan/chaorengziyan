@@ -78,7 +78,7 @@ export function buildImageGenerationInstruction(
         lines.push(buildBrandLogoInstruction(label, execution.brandLogoPosition ?? "bottom_right"));
       } else {
         lines.push(
-          `输入图片${label}为设计语言参考图，不作为商品事实；必须按后续结构化分析迁移其可复用设计规则。`
+          `输入图片${label}为设计语言参考图，不作为商品事实，且不得成为当前商品事实；必须按后续结构化分析迁移其可复用设计规则。`
         );
       }
     }
@@ -97,7 +97,7 @@ export function buildImageGenerationInstruction(
       const start = editBaseCount + counts.product + 1;
       const end = editBaseCount + counts.product + counts.reference;
       lines.push(
-        `输入图片${start}-${end}为设计语言参考图，不作为商品事实；必须按后续结构化分析迁移其可复用设计规则。`
+        `输入图片${start}-${end}为设计语言参考图，不作为商品事实，且不得成为当前商品事实；必须按后续结构化分析迁移其可复用设计规则。`
       );
     }
   }

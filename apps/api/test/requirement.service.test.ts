@@ -119,6 +119,8 @@ const context = {
 const atomicGroupDefaults = {
   subjectPolicy: { defaultAction: "preserve" as const, allowedChanges: [] },
   referenceAnalyses: [],
+  referenceDesignPlan: null,
+  copyPlan: { blocks: [], forbiddenFacts: [] },
   instruction: "按当前分组需求生成"
 };
 
@@ -215,7 +217,8 @@ describe("RequirementService conversation contract", () => {
         })
       }),
       expect.any(Object),
-      expect.any(Array)
+      expect.any(Array),
+      expect.objectContaining({ timeoutMs: expect.any(Number) })
     );
     const serializedAiContext = JSON.stringify(resolveConversation.mock.calls[0]?.[0]);
     expect(serializedAiContext).not.toContain("小猪");

@@ -156,8 +156,12 @@ class FakeTaskStore implements ImageGenerationTaskStore {
     return Promise.resolve();
   }
 
-  public markQueueDeliveryFailed(_unitId: string): Promise<void> {
+  public markQueueDeliveryFailed(): Promise<void> {
     return Promise.resolve();
+  }
+
+  public failUnsupportedLegacyTasks(): Promise<string[]> {
+    return Promise.resolve([]);
   }
 
   public findRecoverableUnits(): Promise<Array<{ taskId: string; unitId: string }>> {
@@ -210,6 +214,7 @@ describe("ImageGenerationProcessor", () => {
           position: 0,
           status: "running",
           instruction: task.instruction,
+          requirement: task.requirement,
           outputLayout: "separate_image",
           sourceAssets: task.sourceAssets,
           qualitySourceAssetIds: []
@@ -248,6 +253,7 @@ describe("ImageGenerationProcessor", () => {
           position: 0,
           status: "running",
           instruction: task.instruction,
+          requirement: task.requirement,
           outputLayout: "separate_image",
           sourceAssets: [task.sourceAssets[0]!],
           qualitySourceAssetIds: []
@@ -291,6 +297,7 @@ describe("ImageGenerationProcessor", () => {
           position: 0,
           status: "running",
           instruction: task.instruction,
+          requirement: task.requirement,
           outputLayout: "separate_image",
           sourceAssets: [task.sourceAssets[0]!],
           qualitySourceAssetIds: []
@@ -313,6 +320,45 @@ describe("ImageGenerationProcessor", () => {
 
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({ requestId: `${task.id}:${unitId}:attempt:1` })
+    );
+    expect(generate.mock.calls[0]?.[0].resume).toBeUndefined();
+  });
+
+  it("uses a fresh provider idempotency key after a validation failure", async () => {
+    const unitId = "00000000-0000-4000-8000-000000000041";
+    const unitTask: WorkerExecutableTask = {
+      ...structuredClone(task),
+      status: "running",
+      units: [
+        {
+          id: unitId,
+          position: 0,
+          status: "running",
+          instruction: task.instruction,
+          requirement: task.requirement,
+          outputLayout: "separate_image",
+          sourceAssets: [task.sourceAssets[0]!],
+          qualitySourceAssetIds: []
+        }
+      ]
+    };
+    const store = new FakeTaskStore(unitTask);
+    store.previousFailedAttempt = {
+      providerRequestId: "relay-task-with-invalid-result",
+      failureStage: "validation",
+      errorCode: "IMAGE_BINARY_SIGNATURE_INVALID"
+    };
+    const generate = vi.fn<ImageGenerationPort["generate"]>(() =>
+      Promise.resolve([{ content: validPng, mimeType: "image/png" as const }])
+    );
+    const processor = new ImageGenerationProcessor(environment, store, new MemoryStorage(), {
+      generate
+    });
+
+    await processor.executeUnit(task.id, unitId, 2);
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: `${task.id}:${unitId}:attempt:2` })
     );
     expect(generate.mock.calls[0]?.[0].resume).toBeUndefined();
   });

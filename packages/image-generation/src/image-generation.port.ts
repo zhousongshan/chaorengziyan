@@ -51,6 +51,7 @@ export class ImageProviderError extends Error {
       stage?: "submission" | "polling" | "download" | "validation";
       retryable?: boolean;
       cause?: unknown;
+      diagnostics?: Record<string, unknown>;
     } = {}
   ) {
     super(message, details.cause === undefined ? undefined : { cause: details.cause });

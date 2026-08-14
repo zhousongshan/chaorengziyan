@@ -70,10 +70,10 @@ export class ImageGenerationProcessor {
     if (loaded.unit.status && terminalStatuses.has(loaded.unit.status)) return;
     if (!(await this.tasks.claimUnit(taskId, unitId))) return;
 
-    // Keep the original first-attempt key stable so an ambiguous submission can be replayed safely.
-    const requestId = `${taskId}:${unitId}:attempt:1`;
     const previousAttempt = await this.tasks.loadPreviousFailedUnitAttempt(unitId, attemptNumber);
     const resume = resumableProviderAttempt(previousAttempt);
+    const providerAttemptNumber = reusableProviderAttempt(previousAttempt) ? 1 : attemptNumber;
+    const requestId = `${taskId}:${unitId}:attempt:${providerAttemptNumber}`;
     await this.tasks.startUnitAttempt(unitId, attemptNumber);
     let model;
     try {
@@ -88,7 +88,7 @@ export class ImageGenerationProcessor {
     const providerPromise = this.generator.generate({
       requestId,
       model,
-      requirement: loaded.unit.requirement ?? { ...loaded.task.requirement, imageCount: 1 },
+      requirement: loaded.unit.requirement,
       renderSettings: loaded.task.renderSettings,
       instruction: loaded.unit.instruction,
       sources,
@@ -387,11 +387,28 @@ function resumableProviderAttempt(
   };
 }
 
+function reusableProviderAttempt(
+  attempt:
+    | {
+        providerRequestId?: string;
+        failureStage?: "submission" | "polling" | "download" | "validation";
+      }
+    | undefined
+): boolean {
+  return Boolean(
+    attempt &&
+    (attempt.failureStage === "submission" ||
+      (attempt.providerRequestId &&
+        (attempt.failureStage === "polling" || attempt.failureStage === "download")))
+  );
+}
+
 function providerErrorDetails(error: ImageProviderError): Record<string, unknown> {
   const details: Record<string, unknown> = {
     retryable: error.details.retryable ?? null
   };
   if (error.details.stage) details.stage = error.details.stage;
+  if (error.details.diagnostics) details.diagnostics = error.details.diagnostics;
   const cause = serializeError(error.details.cause ?? error.cause);
   if (cause) details.cause = cause;
   return details;
@@ -411,6 +428,9 @@ function userSafeGenerationMessage(code: string): string {
   switch (code) {
     case "IMAGE_PROVIDER_NOT_CONFIGURED":
       return "生图服务尚未配置，请联系管理员";
+    case "IMAGE_PROVIDER_AUTH_FAILED":
+    case "IMAGE_PROVIDER_ACCESS_DENIED":
+      return "生图服务鉴权或访问权限异常，请联系管理员";
     case "IMAGE_PROVIDER_NOT_SUPPORTED":
     case "IMAGE_MODEL_NOT_AVAILABLE":
       return "所选生图模型当前不可用，请更换模型或联系管理员";

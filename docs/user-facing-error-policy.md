@@ -34,15 +34,17 @@
 
 需求理解服务还必须区分以下稳定错误码：
 
-| 错误码 | 用户提示方向 | 用户动作 |
-| --- | --- | --- |
-| `REQUIREMENT_AI_TIMEOUT` | 需求理解等待时间过长 | 重新尝试 |
-| `REQUIREMENT_AI_RATE_LIMITED` | 当前需求理解请求较多 | 稍后重试 |
-| `REQUIREMENT_AI_SERVICE_UNAVAILABLE` | 需求理解服务暂时不可用 | 重新尝试 |
-| `REQUIREMENT_AI_AUTH_FAILED` | 需求理解服务配置异常 | 联系管理员 |
-| `REQUIREMENT_AI_NOT_CONFIGURED` | 需求理解服务尚未配置 | 联系管理员 |
+| 错误码                                  | 用户提示方向                       | 用户动作             |
+| --------------------------------------- | ---------------------------------- | -------------------- |
+| `REQUIREMENT_AI_TIMEOUT`                | 需求理解等待时间过长               | 重新尝试             |
+| `REQUIREMENT_AI_RATE_LIMITED`           | 当前需求理解请求较多               | 稍后重试             |
+| `REQUIREMENT_AI_SERVICE_UNAVAILABLE`    | 需求理解服务暂时不可用             | 重新尝试             |
+| `REQUIREMENT_AI_AUTH_FAILED`            | 需求理解服务配置异常               | 联系管理员           |
+| `IMAGE_PROVIDER_AUTH_FAILED`            | 生图服务鉴权失败                   | 联系管理员           |
+| `IMAGE_PROVIDER_ACCESS_DENIED`          | 生图服务无访问权限                 | 联系管理员           |
+| `REQUIREMENT_AI_NOT_CONFIGURED`         | 需求理解服务尚未配置               | 联系管理员           |
 | `REQUIREMENT_AI_CAPABILITY_UNSUPPORTED` | 当前模型不支持图片或结构化需求理解 | 更换模型或联系管理员 |
-| `REQUIREMENT_AI_INVALID_RESPONSE` | 需求理解结果未通过程序校验 | 重新尝试 |
+| `REQUIREMENT_AI_INVALID_RESPONSE`       | 需求理解结果未通过程序校验         | 重新尝试             |
 
 需求理解单次模型调用使用 `REQUIREMENT_AI_TIMEOUT_MS`，整轮（包括一次短退避重试和最多一次 JSON 格式修复）使用 `REQUIREMENT_AI_TURN_BUDGET_MS`。前端不自行判断超时，页面只展示后端最终持久化的稳定错误码。
 

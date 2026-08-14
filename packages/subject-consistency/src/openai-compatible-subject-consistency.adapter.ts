@@ -173,7 +173,7 @@ async function completeJson(options: CompletionOptions): Promise<unknown> {
   let completion;
   try {
     completion = chatCompletionResponseSchema.parse(await response.json());
-  } catch (error) {
+  } catch {
     throw new SubjectConsistencyProviderError(
       "INVALID_SUBJECT_AI_RESPONSE",
       "主体图片检查服务返回了无效结果",

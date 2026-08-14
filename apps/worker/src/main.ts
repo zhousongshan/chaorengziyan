@@ -142,6 +142,13 @@ async function recoverSubjectChecks(): Promise<void> {
 }
 
 async function recoverImageTasks(): Promise<void> {
+  const unsupportedLegacyTaskIds = await taskStore.failUnsupportedLegacyTasks();
+  if (unsupportedLegacyTaskIds.length > 0) {
+    logger.warn("unsupported_legacy_image_tasks_failed", {
+      count: unsupportedLegacyTaskIds.length,
+      taskIds: unsupportedLegacyTaskIds
+    });
+  }
   const units = await taskStore.findRecoverableUnits();
   for (const unit of units) {
     await imageQueue.enqueueUnit(unit.taskId, unit.unitId);

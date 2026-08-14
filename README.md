@@ -185,7 +185,7 @@ Worker参数：
 
 ```dotenv
 IMAGE_WORKER_CONCURRENCY=2
-# 仅用于历史整任务队列；独立输出单元固定为首次执行加一次重试
+# 独立输出单元重试退避时间；输出单元固定为首次执行加一次重试
 IMAGE_JOB_BACKOFF_MS=2000
 ```
 

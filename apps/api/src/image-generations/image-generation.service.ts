@@ -379,6 +379,13 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
         message: "历史结果对应的冻结执行分组不存在"
       });
     }
+    const frozenInstruction = sourceUnit.instruction?.trim();
+    if (!frozenInstruction || !sourceUnit.requirementSnapshot) {
+      throw new ConflictException({
+        code: "GENERATION_PLAN_CONTEXT_CONFLICT",
+        message: "历史结果缺少完整的冻结单元指令或需求快照，不能再次生成"
+      });
+    }
     this.imageModels.getEnabled(sourceTask.modelId);
     const sourceAssetIds = [
       ...new Set([
@@ -434,7 +441,7 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
           })),
           outputCount: 1,
           outputLayout: sourceUnit.outputLayout,
-          instruction: sourceUnit.instruction ?? sourceTask.instruction
+          instruction: frozenInstruction
         }
       ]
     };
@@ -488,8 +495,8 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
           groupPosition: 0,
           variantPosition: 0,
           outputLayout: sourceUnit.outputLayout,
-          instruction: sourceUnit.instruction,
-          requirementSnapshot: sourceUnit.requirementSnapshot ?? requirement,
+          instruction: frozenInstruction,
+          requirementSnapshot: sourceUnit.requirementSnapshot,
           sources: sourceUnit.sources.map((source) => ({ ...source })),
           qualitySourceAssetIds: [...sourceUnit.qualitySourceAssetIds],
           subjectEntities: (sourceUnit.subjectEntities ?? []).map((entity) => ({

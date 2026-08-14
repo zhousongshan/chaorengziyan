@@ -220,6 +220,7 @@ describe.skipIf(!enabled)("BullMQ image generation flow", () => {
           variantPosition: 0,
           outputLayout: "separate_image",
           instruction: "生成第一张",
+          requirementSnapshot: result.finalRequirement,
           status: "queued",
           createdAt: now,
           updatedAt: now
@@ -232,6 +233,7 @@ describe.skipIf(!enabled)("BullMQ image generation flow", () => {
           variantPosition: 0,
           outputLayout: "separate_image",
           instruction: "生成第二张",
+          requirementSnapshot: result.finalRequirement,
           status: "queued",
           createdAt: now,
           updatedAt: now
@@ -410,6 +412,7 @@ describe.skipIf(!enabled)("BullMQ image generation flow", () => {
         variantPosition: 0,
         outputLayout: "separate_image",
         instruction: "等待后取消",
+        requirementSnapshot: result.finalRequirement,
         status: "queued",
         createdAt: now,
         updatedAt: now

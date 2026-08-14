@@ -31,6 +31,8 @@ const currentRequirement: FinalRequirement = {
 const atomicGroupDefaults = {
   subjectPolicy: { defaultAction: "preserve" as const, allowedChanges: [] },
   referenceAnalyses: [],
+  referenceDesignPlan: null,
+  copyPlan: { blocks: [], forbiddenFacts: [] },
   instruction: "按本分组当前需求生成"
 };
 
@@ -53,12 +55,42 @@ const completeReferenceAnalysis = {
   }
 };
 
+const completeReferenceDesignPlan = {
+  understanding: {
+    designIntent: "用清晰的信息层级突出商品卖点",
+    strengths: ["左右分栏明确", "标题层级清晰"],
+    weaknesses: [],
+    readingOrder: ["品牌", "主标题", "商品主体", "辅助卖点"]
+  },
+  layoutBlueprint: {
+    canvas: "1:1 方形画布",
+    subjectPlacement: "商品位于右侧视觉中心",
+    whitespace: "左侧为文案保留稳定留白",
+    zones: [
+      {
+        zone: "主视觉区",
+        purpose: "展示当前商品",
+        placement: "画布右侧",
+        relativeSize: "约占画布一半",
+        hierarchy: "第一视觉主体"
+      }
+    ]
+  },
+  productAdaptation: {
+    subjectReplacement: "仅使用当前商品替换参考商品",
+    preserve: ["当前商品可见外观"],
+    adapt: ["按当前商品轮廓调整留白"],
+    avoid: ["不复制参考商品和品牌"]
+  }
+};
+
 describe("conversation requirement AI contract", () => {
   it("rejects a reference image without its structured analysis", () => {
     const normalized = normalizeConversationRequirementAiOutput({
       currentRequirement,
       defaults,
       availableImageKeys: ["reference_1"],
+      availableReferenceImageKeys: ["reference_1"],
       availableTargetImageKeys: [],
       maxOutputCount: 4,
       rawOutput: referencePlanOutput([])
@@ -80,6 +112,7 @@ describe("conversation requirement AI contract", () => {
       currentRequirement,
       defaults,
       availableImageKeys: ["reference_1", "reference_2"],
+      availableReferenceImageKeys: ["reference_1", "reference_2"],
       availableTargetImageKeys: [],
       maxOutputCount: 4,
       rawOutput: referencePlanOutput([{ ...completeReferenceAnalysis, imageKey: "reference_2" }])
@@ -93,6 +126,7 @@ describe("conversation requirement AI contract", () => {
       currentRequirement,
       defaults,
       availableImageKeys: ["reference_1"],
+      availableReferenceImageKeys: ["reference_1"],
       availableTargetImageKeys: [],
       maxOutputCount: 4,
       rawOutput: referencePlanOutput([completeReferenceAnalysis])
@@ -653,6 +687,7 @@ function referencePlanOutput(referenceAnalyses: unknown[]) {
           ...atomicGroupDefaults,
           sourceImages: [{ imageKey: "reference_1", usage: "style_reference" }],
           referenceAnalyses,
+          referenceDesignPlan: completeReferenceDesignPlan,
           outputCount: 1,
           outputLayout: "separate_image",
           instruction: "迁移左右分栏、信息层级和字体规则"

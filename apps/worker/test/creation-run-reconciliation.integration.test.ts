@@ -17,6 +17,7 @@ import {
 import { resolveWorkspacePath } from "@chaoren/storage";
 
 import { CreationRunCoordinator } from "../src/creation-run.coordinator.js";
+import { DrizzleImageGenerationTaskStore } from "../src/image-generation-task.store.js";
 
 const enabled = process.env.RUN_WORKER_INTEGRATION_TESTS === "1";
 
@@ -55,6 +56,7 @@ describe.skipIf(!enabled)("Creation Run reconciliation", () => {
     ];
     const taskIds = [ids.orphanTask, ids.unitTask, ids.legacyTask, ids.checkTask, ids.repairTask];
     const coordinator = new CreationRunCoordinator(database);
+    const taskStore = new DrizzleImageGenerationTaskStore(database);
 
     try {
       await database.db.insert(projects).values({
@@ -149,6 +151,18 @@ describe.skipIf(!enabled)("Creation Run reconciliation", () => {
         [ids.cancelledRun]: "cancelled"
       });
 
+      await expect(taskStore.failUnsupportedLegacyTasks()).resolves.toEqual([ids.legacyTask]);
+      await expect(taskStore.failUnsupportedLegacyTasks()).resolves.toEqual([]);
+      const [failedLegacyTask] = await database.db
+        .select({ status: generationTasks.status, errorCode: generationTasks.errorCode })
+        .from(generationTasks)
+        .where(eq(generationTasks.id, ids.legacyTask));
+      expect(failedLegacyTask).toEqual({
+        status: "failed",
+        errorCode: "GENERATION_PLAN_VERSION_UNSUPPORTED"
+      });
+      await expect(runStatus(database, ids.legacyRun)).resolves.toBe("terminal");
+
       await database.db
         .update(generationTaskUnits)
         .set({ status: "succeeded", updatedAt: new Date() })
@@ -173,11 +187,6 @@ describe.skipIf(!enabled)("Creation Run reconciliation", () => {
       ]);
       await expect(runStatus(database, ids.checkRun)).resolves.toBe("terminal");
 
-      await database.db
-        .update(generationTasks)
-        .set({ status: "succeeded", updatedAt: new Date() })
-        .where(eq(generationTasks.id, ids.legacyTask));
-      await expect(coordinator.finalizeOrphanedRuns()).resolves.toBe(1);
       await expect(coordinator.finalizeOrphanedRuns()).resolves.toBe(0);
       await expect(runStatus(database, ids.legacyRun)).resolves.toBe("terminal");
     } finally {

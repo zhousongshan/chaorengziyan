@@ -55,6 +55,40 @@ const referenceAnalysis = {
   }
 };
 
+const referenceDesignPlan = {
+  understanding: {
+    designIntent: "通过左右分栏突出当前商品卖点",
+    strengths: ["信息层级清晰", "商品焦点明确"],
+    weaknesses: [],
+    readingOrder: ["品牌", "标题", "商品", "辅助卖点"]
+  },
+  layoutBlueprint: {
+    canvas: "1:1 方形画布",
+    subjectPlacement: "商品位于画布右侧",
+    whitespace: "左侧保留文案留白",
+    zones: [
+      {
+        zone: "商品区",
+        purpose: "展示当前商品",
+        placement: "画布右侧",
+        relativeSize: "约占画布一半",
+        hierarchy: "第一视觉主体"
+      }
+    ]
+  },
+  productAdaptation: {
+    subjectReplacement: "用当前商品替换参考商品",
+    preserve: ["当前商品外观"],
+    adapt: ["按当前商品轮廓调整布局"],
+    avoid: ["不复制参考商品、品牌和原文案"]
+  }
+};
+
+const copyPlan = {
+  blocks: [],
+  forbiddenFacts: ["不得编造材质、规格、功效或承诺"]
+};
+
 const environment = environmentSchema.parse({
   NODE_ENV: "test",
   DATABASE_URL: "postgresql://test:test@127.0.0.1:5432/test",
@@ -208,6 +242,8 @@ function currentExecutionPlan(outputCount = 1): ResolvedGenerationPlan {
         ],
         subjectPolicy: { defaultAction: "preserve", allowedChanges: [] },
         referenceAnalyses: [referenceAnalysis],
+        referenceDesignPlan,
+        copyPlan,
         outputCount,
         outputLayout: "separate_image",
         instruction: "保持当前商品事实，迁移参考海报的左右分栏和信息层级"
@@ -246,7 +282,7 @@ describe("ImageGenerationService", () => {
     await expect(tasks.findById(created.taskId)).resolves.toMatchObject({
       idempotencyKey,
       instruction: "本任务只允许按已冻结的执行单元指令执行。",
-      instructionVersion: "image-instruction-v6"
+      instructionVersion: "image-instruction-v7"
     });
     await expect(tasks.findById(created.taskId)).resolves.toMatchObject({
       units: [
@@ -451,6 +487,8 @@ describe("ImageGenerationService", () => {
           sourceImages: sourceUnit.sources,
           subjectPolicy: { defaultAction: "preserve", allowedChanges: [] },
           referenceAnalyses: [referenceAnalysis],
+          referenceDesignPlan,
+          copyPlan,
           subjectEntities: sourceUnit.subjectEntities.map((entity) => ({
             ...entity,
             lineageKind: "inherited_product_entity",
@@ -733,6 +771,7 @@ async function createRegenerationSubject(options?: {
     variantPosition: 0,
     outputLayout: "separate_image",
     instruction: "保持商品主体，生成新的桌面陈列构图",
+    requirementSnapshot: { ...sourceResult.finalRequirement, imageCount: 1 },
     status: options?.unitStatus ?? "succeeded",
     attemptCount: 1,
     stageStartedAt: "2026-08-11T01:00:00.000Z",

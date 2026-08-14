@@ -342,10 +342,19 @@ export class OpenAiImageAdapter implements ImageProviderAdapter {
       );
     }
     if (!response.ok) {
-      throw new ImageProviderError(errorCode, `中转生图服务请求失败，状态码 ${response.status}`, {
-        stage,
-        retryable: response.status === 408 || response.status === 429 || response.status >= 500
-      });
+      const responseBody = await response.text().catch(() => "");
+      throw new ImageProviderError(
+        imageProviderHttpErrorCode(response.status, errorCode),
+        `中转生图服务请求失败，状态码 ${response.status}`,
+        {
+          stage,
+          retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+          diagnostics: {
+            httpStatus: response.status,
+            responseBody: responseBody.slice(0, 2_000)
+          }
+        }
+      );
     }
     const parsed = schema.safeParse(await response.json().catch(() => null));
     if (!parsed.success) {
@@ -396,6 +405,15 @@ export class OpenAiImageAdapter implements ImageProviderAdapter {
   private get jsonHeaders(): Record<string, string> {
     return { Authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" };
   }
+}
+
+function imageProviderHttpErrorCode(status: number, fallback: string): string {
+  if (status === 401) return "IMAGE_PROVIDER_AUTH_FAILED";
+  if (status === 403) return "IMAGE_PROVIDER_ACCESS_DENIED";
+  if (status === 408) return "IMAGE_PROVIDER_TIMEOUT";
+  if (status === 429) return "IMAGE_PROVIDER_RATE_LIMITED";
+  if (status >= 500) return "IMAGE_PROVIDER_UNAVAILABLE";
+  return fallback;
 }
 
 function extensionFor(mimeType: string): string {

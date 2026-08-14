@@ -210,6 +210,9 @@ class FakeStore implements SubjectConsistencyTaskStore {
   public markExecutionFailed(): Promise<void> {
     return Promise.resolve();
   }
+  public markQueueDeliveryFailed(): Promise<void> {
+    return Promise.resolve();
+  }
   public findRecoverableIds(): Promise<string[]> {
     return Promise.resolve([]);
   }
