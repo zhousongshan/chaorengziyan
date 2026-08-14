@@ -27,6 +27,7 @@ import {
 
 import { DATABASE_CONNECTION } from "../database/database.constants.js";
 import { assetIsProductAvailable } from "../media-assets/media-asset-eligibility.js";
+import { parsePersistedConversationState } from "./persisted-conversation-state.js";
 import type {
   CompleteConversationTurnInput,
   ConversationMemoryEntryRecord,
@@ -1319,7 +1320,7 @@ function toSnapshot(
     sessionId: row.sessionId,
     throughTurn: row.throughTurn,
     version: row.version,
-    state: conversationStateSchema.parse(row.state),
+    state: parsePersistedConversationState(row.state),
     createdAt: row.createdAt.toISOString()
   };
 }
