@@ -44,6 +44,7 @@ export function ModelSettingsPanel() {
       promptOptimizationModel: "gpt-5.6-sol",
       requirementBaseUrl: "https://jennyapi.site/v1",
       requirementApiKey: "",
+      requirementModel: "gpt-5.6-sol",
       imageBaseUrl: "https://jennyapi.site/v1",
       imageApiKey: "",
       inspectionBaseUrl: "https://jennyapi.site/v1",
@@ -64,6 +65,7 @@ export function ModelSettingsPanel() {
         promptOptimizationModel: response.models.promptOptimization.model,
         requirementBaseUrl: response.models.requirement.baseUrl,
         requirementApiKey: "",
+        requirementModel: response.models.requirement.model,
         imageBaseUrl: response.models.image.baseUrl,
         imageApiKey: "",
         inspectionBaseUrl: response.models.inspection.baseUrl,
@@ -81,6 +83,7 @@ export function ModelSettingsPanel() {
       promptOptimizationModel: settingsQuery.data.models.promptOptimization.model,
       requirementBaseUrl: settingsQuery.data.models.requirement.baseUrl,
       requirementApiKey: "",
+      requirementModel: settingsQuery.data.models.requirement.model,
       imageBaseUrl: settingsQuery.data.models.image.baseUrl,
       imageApiKey: "",
       inspectionBaseUrl: settingsQuery.data.models.inspection.baseUrl,
@@ -171,7 +174,9 @@ export function ModelSettingsPanel() {
           configured={settingsQuery.data.models.requirement.apiKeyConfigured}
           baseUrlRegistration={form.register("requirementBaseUrl")}
           apiKeyRegistration={form.register("requirementApiKey")}
+          modelRegistration={form.register("requirementModel")}
           baseUrlError={form.formState.errors.requirementBaseUrl?.message}
+          modelError={form.formState.errors.requirementModel?.message}
         />
         <ModelConfigurationCard
           accent="blue"

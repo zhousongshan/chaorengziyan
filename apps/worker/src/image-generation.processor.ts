@@ -16,7 +16,6 @@ import type {
   ImageGenerationTaskStore,
   WorkerExecutableUnit,
   WorkerExecutableTask,
-  WorkerFailedUnit,
   WorkerOutputAsset
 } from "./image-generation-task.store.js";
 import { WorkerTaskDataError } from "./image-generation-task.store.js";
@@ -58,60 +57,6 @@ export class ImageGenerationProcessor {
     private readonly subjectConsistencyQueue?: SubjectConsistencyQueuePublisher
   ) {}
 
-  public async execute(taskId: string): Promise<void> {
-    let task = await this.tasks.load(taskId);
-    if (!task) {
-      throw new WorkerTaskDataError("IMAGE_GENERATION_TASK_NOT_FOUND", "生图任务不存在");
-    }
-    if (terminalStatuses.has(task.status)) return;
-
-    if (task.status === "queued") {
-      const claimed = await this.tasks.markRunning(taskId);
-      if (!claimed) {
-        task = await this.tasks.load(taskId);
-        if (!task || terminalStatuses.has(task.status)) return;
-        if (task.status !== "running") {
-          throw new WorkerTaskDataError(
-            "INVALID_IMAGE_GENERATION_TASK_TRANSITION",
-            "生图任务无法进入运行状态"
-          );
-        }
-      } else {
-        task = { ...task, status: "running" };
-      }
-    }
-
-    if (task.status !== "running") {
-      throw new WorkerTaskDataError(
-        "INVALID_IMAGE_GENERATION_TASK_TRANSITION",
-        "生图任务当前状态不可执行"
-      );
-    }
-
-    let model;
-    try {
-      model = getEnabledImageModel(this.environment, task.modelId);
-    } catch (error) {
-      if (!(error instanceof ImageModelNotAvailableError)) throw error;
-      throw new WorkerTaskDataError("IMAGE_MODEL_NOT_AVAILABLE", error.message);
-    }
-    const units = task.units ?? [];
-    if (units.length > 0) {
-      await this.executeUnits(task, units, model);
-      return;
-    }
-    const sources = await this.loadSources(task);
-    const generated = await this.generator.generate({
-      requestId: task.id,
-      model,
-      requirement: task.requirement,
-      renderSettings: task.renderSettings,
-      instruction: task.instruction,
-      sources
-    });
-    await this.persistOutputs(task, generated);
-  }
-
   public async executeUnit(taskId: string, unitId: string, attemptNumber: number): Promise<void> {
     const currentTask = await this.tasks.load(taskId);
     if (!currentTask) {
@@ -143,7 +88,7 @@ export class ImageGenerationProcessor {
     const providerPromise = this.generator.generate({
       requestId,
       model,
-      requirement: { ...loaded.task.requirement, imageCount: 1 },
+      requirement: loaded.unit.requirement ?? { ...loaded.task.requirement, imageCount: 1 },
       renderSettings: loaded.task.renderSettings,
       instruction: loaded.unit.instruction,
       sources,
@@ -223,7 +168,7 @@ export class ImageGenerationProcessor {
   ): Promise<void> {
     await this.tasks.failUnitAttempt(unitId, attemptNumber, {
       code: failure.code,
-      message: failure.message,
+      message: userSafeGenerationMessage(failure.code),
       ...(failure.stage ? { stage: failure.stage } : {}),
       ...(failure.details ? { details: failure.details } : {})
     });
@@ -234,94 +179,6 @@ export class ImageGenerationProcessor {
       code: failure.code,
       message: userSafeGenerationMessage(failure.code)
     });
-  }
-
-  private async executeUnits(
-    task: WorkerExecutableTask,
-    units: WorkerExecutableUnit[],
-    model: ReturnType<typeof getEnabledImageModel>
-  ): Promise<void> {
-    const outputs: WorkerOutputAsset[] = [];
-    const failures: WorkerFailedUnit[] = [];
-    const concurrency = Math.min(2, this.environment.IMAGE_WORKER_CONCURRENCY);
-
-    for (let index = 0; index < units.length; index += concurrency) {
-      const batch = units.slice(index, index + concurrency);
-      const settled = await Promise.allSettled(
-        batch.map(async (unit) => {
-          const sources = await this.loadUnitSources(unit);
-          const generated = await this.generator.generate({
-            requestId: `${task.id}:${unit.id}`,
-            model,
-            requirement: { ...task.requirement, imageCount: 1 },
-            renderSettings: task.renderSettings,
-            instruction: unit.instruction,
-            sources
-          });
-          if (generated.length !== 1) {
-            throw new ImageProviderError(
-              "INVALID_GENERATION_UNIT_OUTPUT_COUNT",
-              "生图服务未按原子单元返回一张图片"
-            );
-          }
-          const prepared = await this.prepareOutputs(task, generated, unit.sourceAssets, unit);
-          return prepared[0]!;
-        })
-      );
-      settled.forEach((result, resultIndex) => {
-        const unit = batch[resultIndex]!;
-        if (result.status === "fulfilled") {
-          outputs.push(result.value);
-        } else {
-          const failure = classifyGenerationFailure(result.reason);
-          failures.push({
-            unitId: unit.id,
-            position: unit.position,
-            error: { code: failure.code, message: failure.message }
-          });
-        }
-      });
-    }
-
-    outputs.sort((left, right) => (left.unitPosition ?? 0) - (right.unitPosition ?? 0));
-    const allProductSources = [
-      ...new Set(
-        units.flatMap((unit) =>
-          unit.sourceAssets.filter((source) => source.role === "product").map((source) => source.id)
-        )
-      )
-    ];
-    let checkIds: string[];
-    try {
-      checkIds = await this.tasks.markSucceeded(
-        task.id,
-        outputs,
-        allProductSources.length > 0
-          ? {
-              requirementRunId: task.requirementRunId,
-              sourceProductAssetIds: allProductSources,
-              inspectionModel: this.environment.SUBJECT_INSPECTION_AI_MODEL,
-              requirementModel: this.environment.REQUIREMENT_AI_MODEL,
-              workflowVersion: SUBJECT_CONSISTENCY_WORKFLOW_VERSION
-            }
-          : undefined,
-        failures
-      );
-    } catch (error) {
-      await Promise.all(
-        outputs.map((output) => this.storage.delete(output.storageKey).catch(() => undefined))
-      );
-      throw error;
-    }
-    await this.enqueueSubjectChecks(checkIds, task.id);
-  }
-
-  public async recordFailure(taskId: string, failure: GenerationFailure): Promise<void> {
-    await this.tasks.markFailed(taskId, { code: failure.code, message: failure.message });
-  }
-
-  private async loadSources(task: WorkerExecutableTask): Promise<ImageGenerationSource[]> {
-    return this.loadSourceAssets(task.sourceAssets);
   }
 
   private async loadUnitSources(unit: WorkerExecutableUnit): Promise<ImageGenerationSource[]> {
@@ -341,35 +198,6 @@ export class ImageGenerationProcessor {
       });
     }
     return sources;
-  }
-
-  private async persistOutputs(
-    task: WorkerExecutableTask,
-    images: Awaited<ReturnType<ImageGenerationPort["generate"]>>
-  ): Promise<void> {
-    const outputs = await this.prepareOutputs(task, images, task.sourceAssets);
-    const productSources = task.sourceAssets.filter((source) => source.role === "product");
-    try {
-      const checkIds = await this.tasks.markSucceeded(
-        task.id,
-        outputs,
-        productSources.length > 0
-          ? {
-              requirementRunId: task.requirementRunId,
-              sourceProductAssetIds: productSources.map((source) => source.id),
-              inspectionModel: this.environment.SUBJECT_INSPECTION_AI_MODEL,
-              requirementModel: this.environment.REQUIREMENT_AI_MODEL,
-              workflowVersion: SUBJECT_CONSISTENCY_WORKFLOW_VERSION
-            }
-          : undefined
-      );
-      await this.enqueueSubjectChecks(checkIds, task.id);
-    } catch (error) {
-      await Promise.all(
-        outputs.map((output) => this.storage.delete(output.storageKey).catch(() => undefined))
-      );
-      throw error;
-    }
   }
 
   private async enqueueSubjectChecks(checkIds: string[], executionId: string): Promise<void> {
@@ -395,13 +223,6 @@ export class ImageGenerationProcessor {
     const qualitySourceAssetIds =
       unit?.qualitySourceAssetIds ?? productSources.map((source) => source.id);
     const deliverDirectly = qualitySourceAssetIds.length === 0;
-    const watermark =
-      deliverDirectly && task.watermarkAsset
-        ? {
-            content: await streamToBuffer(await this.storage.read(task.watermarkAsset.storageKey)),
-            mimeType: task.watermarkAsset.mimeType
-          }
-        : null;
     try {
       for (const image of images) {
         if (
@@ -421,8 +242,7 @@ export class ImageGenerationProcessor {
         ) {
           const rendered = await renderDeliveryImage({
             source: { content: image.content, mimeType: image.mimeType },
-            settings: task.deliverySettings,
-            watermark
+            settings: task.deliverySettings
           });
           outputContent = rendered.content;
           outputMimeType = rendered.mimeType;
@@ -538,7 +358,11 @@ export function classifyGenerationFailure(error: unknown): GenerationFailure {
     };
   }
   if (error instanceof ImageDeliveryRenderError) {
-    return { code: "IMAGE_DELIVERY_RENDER_FAILED", message: error.message, retryable: false };
+    return {
+      code: "DELIVERY_IMAGE_PROCESSING_FAILED",
+      message: userSafeGenerationMessage("DELIVERY_IMAGE_PROCESSING_FAILED"),
+      retryable: true
+    };
   }
   return { code: "IMAGE_GENERATION_FAILED", message: "图片生成失败", retryable: true };
 }
@@ -584,16 +408,35 @@ function serializeError(error: unknown): Record<string, unknown> | undefined {
 }
 
 function userSafeGenerationMessage(code: string): string {
-  if (code === "IMAGE_PROVIDER_NOT_CONFIGURED") {
-    return "生图服务尚未配置，请联系管理员";
+  switch (code) {
+    case "IMAGE_PROVIDER_NOT_CONFIGURED":
+      return "生图服务尚未配置，请联系管理员";
+    case "IMAGE_PROVIDER_NOT_SUPPORTED":
+    case "IMAGE_MODEL_NOT_AVAILABLE":
+      return "所选生图模型当前不可用，请更换模型或联系管理员";
+    case "IMAGE_DOWNLOAD_FAILED":
+      return "生图已完成，但结果下载失败，请稍后重试";
+    case "IMAGE_DOWNLOAD_URL_REJECTED":
+    case "IMAGE_DOWNLOAD_REDIRECT_LIMIT":
+      return "生图结果地址无法通过安全校验，请重新生成";
+    case "INVALID_IMAGE_RESUME_REQUEST":
+      return "上一次生图任务无法安全恢复，请重新生成";
+    case "INVALID_GENERATION_UNIT_OUTPUT_COUNT":
+      return "生图服务返回的图片数量无效，请重新生成";
+    case "INVALID_SOURCE_PRODUCT_IMAGE":
+    case "IMAGE_DECODE_FAILED":
+    case "IMAGE_MIME_TYPE_MISMATCH":
+      return "商品图片无法读取，请更换图片后重试";
+    case "IMAGE_BINARY_SIGNATURE_INVALID":
+    case "IMAGE_DOWNLOAD_RETURNED_NON_IMAGE":
+    case "INVALID_GENERATED_IMAGE_SIZE":
+    case "INVALID_GENERATED_CANDIDATE":
+      return "生图服务返回的图片无效，请重新生成";
+    case "DELIVERY_IMAGE_PROCESSING_FAILED":
+      return "图片已生成，但最终格式或交付处理失败，请重新尝试";
+    default:
+      return "图片生成失败，请稍后重试";
   }
-  if (code === "IMAGE_DOWNLOAD_FAILED") {
-    return "生图已完成，但结果下载失败，请稍后重试";
-  }
-  if (code === "INVALID_SOURCE_PRODUCT_IMAGE") {
-    return "商品图片无法读取，请更换图片后重试";
-  }
-  return "图片生成失败，请稍后重试";
 }
 
 async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {

@@ -1,0 +1,1 @@
+ALTER TABLE "generation_task_units" ADD COLUMN "requirement_snapshot" jsonb;

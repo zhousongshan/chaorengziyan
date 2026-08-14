@@ -21,6 +21,16 @@ const outputSchema = z
   })
   .strict();
 
+const imageDecisionOutputSchema = outputSchema.pick({
+  contractVersion: true,
+  imageDecision: true
+});
+
+const optimizedTextOutputSchema = outputSchema.pick({
+  contractVersion: true,
+  optimizedText: true
+});
+
 export interface PromptOptimizationValidationContext {
   request: CreatePromptOptimizationRequest;
   maxImageCount: number;
@@ -43,6 +53,69 @@ export type PromptOptimizationValidationResult =
     }
   | { success: false; issues: Array<{ field: string; message: string }> };
 
+export type PromptOptimizationImageDecisionValidationResult =
+  | {
+      success: true;
+      imageDecisionStatus: "not_needed" | "resolved" | "missing" | "ambiguous";
+      selectedImageKeys: string[];
+    }
+  | { success: false; issues: Array<{ field: string; message: string }> };
+
+export function validatePromptOptimizationImageDecision(
+  rawOutput: unknown,
+  context: PromptOptimizationValidationContext
+): PromptOptimizationImageDecisionValidationResult {
+  const parsed = imageDecisionOutputSchema.safeParse(rawOutput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      issues: parsed.error.issues.map((issue) => ({
+        field: issue.path.join(".") || "$",
+        message: issue.message
+      }))
+    };
+  }
+  const issues = validateImageDecision(parsed.data.imageDecision, context);
+  return issues.length > 0
+    ? { success: false, issues }
+    : {
+        success: true,
+        imageDecisionStatus: parsed.data.imageDecision.status,
+        selectedImageKeys: parsed.data.imageDecision.selectedImageKeys
+      };
+}
+
+export function validatePromptOptimizationText(
+  rawOutput: unknown,
+  context: PromptOptimizationValidationContext,
+  decision: {
+    imageDecisionStatus: "not_needed" | "resolved";
+    selectedImageKeys: string[];
+  }
+): PromptOptimizationValidationResult {
+  const parsed = optimizedTextOutputSchema.safeParse(rawOutput);
+  if (!parsed.success) {
+    return {
+      success: false,
+      issues: parsed.error.issues.map((issue) => ({
+        field: issue.path.join(".") || "$",
+        message: issue.message
+      }))
+    };
+  }
+  return validatePromptOptimizationOutput(
+    {
+      contractVersion: PROMPT_OPTIMIZATION_CONTRACT_VERSION,
+      imageDecision: {
+        status: decision.imageDecisionStatus,
+        selectedImageKeys: decision.selectedImageKeys
+      },
+      optimizedText: parsed.data.optimizedText
+    },
+    context
+  );
+}
+
 export function validatePromptOptimizationOutput(
   rawOutput: unknown,
   context: PromptOptimizationValidationContext
@@ -58,28 +131,9 @@ export function validatePromptOptimizationOutput(
     };
   }
 
-  const issues: Array<{ field: string; message: string }> = [];
+  const issues = validateImageDecision(parsed.data.imageDecision, context);
   const selectedImageKeys = parsed.data.imageDecision.selectedImageKeys;
-  const selectedSet = new Set(selectedImageKeys);
-  if (selectedSet.size !== selectedImageKeys.length) {
-    issues.push({
-      field: "imageDecision.selectedImageKeys",
-      message: "图片句柄不能重复"
-    });
-  }
-  if (selectedImageKeys.some((key) => !context.availableImageKeys.includes(key))) {
-    issues.push({
-      field: "imageDecision.selectedImageKeys",
-      message: "图片句柄必须来自程序提供的合法候选"
-    });
-  }
   const decisionStatus = parsed.data.imageDecision.status;
-  if (decisionStatus === "resolved" && selectedImageKeys.length === 0) {
-    issues.push({ field: "imageDecision", message: "resolved 必须选择至少一张合法图片" });
-  }
-  if (decisionStatus !== "resolved" && selectedImageKeys.length > 0) {
-    issues.push({ field: "imageDecision", message: "只有 resolved 可以选择图片" });
-  }
   if (decisionStatus === "resolved" && parsed.data.optimizedText === null) {
     issues.push({ field: "optimizedText", message: "resolved 必须返回完整优化稿" });
   }
@@ -88,16 +142,6 @@ export function validatePromptOptimizationOutput(
   }
   if (["missing", "ambiguous"].includes(decisionStatus) && parsed.data.optimizedText !== null) {
     issues.push({ field: "optimizedText", message: "图片缺失或指代不明确时不能返回优化稿" });
-  }
-  if (
-    context.explicitImageKeys.length > 0 &&
-    (decisionStatus !== "resolved" ||
-      !startsWithSequence(selectedImageKeys, context.explicitImageKeys))
-  ) {
-    issues.push({
-      field: "imageDecision.selectedImageKeys",
-      message: "用户本轮明确附带的图片必须全部按原顺序使用"
-    });
   }
   const candidatesByKey = new Map(
     context.candidateImages.map((candidate) => [candidate.key, candidate])
@@ -180,6 +224,43 @@ export function validatePromptOptimizationOutput(
         imageDecisionStatus: decisionStatus,
         selectedImageKeys
       };
+}
+
+function validateImageDecision(
+  decision: {
+    status: "not_needed" | "resolved" | "missing" | "ambiguous";
+    selectedImageKeys: string[];
+  },
+  context: PromptOptimizationValidationContext
+): Array<{ field: string; message: string }> {
+  const issues: Array<{ field: string; message: string }> = [];
+  const selectedSet = new Set(decision.selectedImageKeys);
+  if (selectedSet.size !== decision.selectedImageKeys.length) {
+    issues.push({ field: "imageDecision.selectedImageKeys", message: "图片句柄不能重复" });
+  }
+  if (decision.selectedImageKeys.some((key) => !context.availableImageKeys.includes(key))) {
+    issues.push({
+      field: "imageDecision.selectedImageKeys",
+      message: "图片句柄必须来自程序提供的合法候选"
+    });
+  }
+  if (decision.status === "resolved" && decision.selectedImageKeys.length === 0) {
+    issues.push({ field: "imageDecision", message: "resolved 必须选择至少一张合法图片" });
+  }
+  if (decision.status !== "resolved" && decision.selectedImageKeys.length > 0) {
+    issues.push({ field: "imageDecision", message: "只有 resolved 可以选择图片" });
+  }
+  if (
+    context.explicitImageKeys.length > 0 &&
+    (decision.status !== "resolved" ||
+      !startsWithSequence(decision.selectedImageKeys, context.explicitImageKeys))
+  ) {
+    issues.push({
+      field: "imageDecision.selectedImageKeys",
+      message: "用户本轮明确附带的图片必须全部按原顺序使用"
+    });
+  }
+  return issues;
 }
 
 function startsWithSequence(values: string[], required: string[]): boolean {

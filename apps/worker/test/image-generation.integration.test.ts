@@ -14,7 +14,6 @@ import {
   environmentSchema,
   IMAGE_GENERATION_UNIT_JOB_NAME,
   imageGenerationUnitJobId,
-  type ImageGenerationJobData,
   type ImageGenerationUnitJobData,
   type RequirementResult,
   type ResolveRequirementRequest
@@ -66,7 +65,7 @@ describe.skipIf(!enabled)("BullMQ image generation flow", () => {
       enableReadyCheck: false,
       maxRetriesPerRequest: null
     });
-    const queue = new Queue<ImageGenerationJobData | ImageGenerationUnitJobData>(queueName, {
+    const queue = new Queue<ImageGenerationUnitJobData>(queueName, {
       connection: queueConnection
     });
     const database = createDatabase(environment.DATABASE_URL);
@@ -108,11 +107,10 @@ describe.skipIf(!enabled)("BullMQ image generation flow", () => {
     };
     const processor = new ImageGenerationProcessor(environment, store, storage, generator);
     const handler = new ImageGenerationJobHandler(processor);
-    const worker = new Worker<ImageGenerationJobData | ImageGenerationUnitJobData>(
-      queueName,
-      (job) => handler.handle(job),
-      { connection: workerConnection, concurrency: 2 }
-    );
+    const worker = new Worker<ImageGenerationUnitJobData>(queueName, (job) => handler.handle(job), {
+      connection: workerConnection,
+      concurrency: 2
+    });
     worker.on("error", (error) => console.error("Worker integration runtime error", error));
 
     try {

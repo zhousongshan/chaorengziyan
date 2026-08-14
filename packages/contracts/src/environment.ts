@@ -18,6 +18,7 @@ export const environmentSchema = z.object({
   CONVERSATION_DISPATCH_INTERVAL_MS: z.coerce.number().int().positive().default(2_000),
   CONVERSATION_TURN_STALE_MS: z.coerce.number().int().positive().default(180_000),
   CONVERSATION_TURN_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(2),
+  CONVERSATION_TURN_MAX_ENQUEUE_ATTEMPTS: z.coerce.number().int().min(1).max(30).default(12),
   SUBJECT_INSPECTION_QUEUE_NAME: z.string().min(1).default("subject-consistency"),
   STORAGE_DRIVER: z.literal("local").default("local"),
   LOCAL_STORAGE_ROOT: z.string().min(1).default("./.local-data/media"),
@@ -26,7 +27,8 @@ export const environmentSchema = z.object({
   REQUIREMENT_AI_BASE_URL: z.url().default("https://jennyapi.site/v1"),
   REQUIREMENT_AI_API_KEY: z.string().optional(),
   REQUIREMENT_AI_MODEL: z.string().min(1).default("gpt-5.6-sol"),
-  REQUIREMENT_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  REQUIREMENT_AI_TIMEOUT_MS: z.coerce.number().int().positive().default(150_000),
+  REQUIREMENT_AI_TURN_BUDGET_MS: z.coerce.number().int().positive().default(240_000),
   PROMPT_OPTIMIZATION_AI_BASE_URL: z.url().optional(),
   PROMPT_OPTIMIZATION_AI_API_KEY: z.string().optional(),
   PROMPT_OPTIMIZATION_AI_MODEL: z.string().min(1).optional(),
@@ -52,8 +54,6 @@ export const environmentSchema = z.object({
   IMAGE_GENERATION_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   IMAGE_DOWNLOAD_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   IMAGE_WORKER_CONCURRENCY: z.coerce.number().int().positive().max(32).default(2),
-  // Applies only to legacy whole-task jobs. Independent output units use the product constant.
-  IMAGE_JOB_ATTEMPTS: z.coerce.number().int().positive().max(10).default(3),
   IMAGE_JOB_BACKOFF_MS: z.coerce.number().int().positive().default(2_000),
   IMAGE_DOWNLOAD_ALLOWED_HOSTS: z.string().default(""),
   MAX_UPLOAD_BYTES: z.coerce

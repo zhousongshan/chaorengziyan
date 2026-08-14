@@ -5,7 +5,7 @@ import type {
   ImageRenderSettings
 } from "@chaoren/contracts";
 
-export type SourceImageRole = "edit_base" | "product" | "reference";
+export type SourceImageRole = "edit_base" | "product" | "reference" | "brand_logo";
 
 export interface ImageGenerationSource {
   assetId: string;

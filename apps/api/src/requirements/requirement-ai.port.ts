@@ -12,6 +12,10 @@ export interface RequirementExecutionConstraints {
   allowedAspectRatios: string[];
 }
 
+export interface RequirementAiCallOptions {
+  timeoutMs: number;
+}
+
 export interface RepairConversationRequirementInput {
   originalInput: ConversationRequirementContext;
   previousOutput: unknown;
@@ -39,7 +43,11 @@ export interface RequirementAiPort {
   resolveConversation(
     input: ConversationRequirementContext,
     constraints: RequirementExecutionConstraints,
-    images: ConversationRequirementImage[]
+    images: ConversationRequirementImage[],
+    options?: RequirementAiCallOptions
   ): Promise<unknown>;
-  repairConversation(input: RepairConversationRequirementInput): Promise<unknown>;
+  repairConversation(
+    input: RepairConversationRequirementInput,
+    options?: RequirementAiCallOptions
+  ): Promise<unknown>;
 }

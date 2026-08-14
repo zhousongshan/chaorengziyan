@@ -60,7 +60,9 @@ export function normalizeConversationRequirementAiOutput(input: {
   availableImageKeys: string[];
   availableTargetImageKeys: string[];
   availableProductSourceImageKeys?: string[];
+  availableReferenceImageKeys?: string[];
   availableProductEntityIdsByImageKey?: Record<string, string[]>;
+  hasCurrentProductAttachments?: boolean;
   maxOutputCount: number;
 }): ConversationRequirementContractResult {
   const command = requirementAiCommandEnvelopeSchema.safeParse(input.rawOutput);
@@ -138,7 +140,7 @@ export function normalizeConversationRequirementAiOutput(input: {
         issues: [{ field: "requirements", message: "update_requirement 必须包含需求对象" }]
       };
     }
-    const normalized = normalizeRequirementUpdate({
+    let normalized = normalizeRequirementUpdate({
       requirements,
       currentRequirement: input.currentRequirement,
       defaults: input.defaults
@@ -149,10 +151,36 @@ export function normalizeConversationRequirementAiOutput(input: {
       required: command.data.action === "generate",
       availableImageKeys: input.availableImageKeys,
       availableProductSourceImageKeys: input.availableProductSourceImageKeys ?? [],
+      availableReferenceImageKeys: input.availableReferenceImageKeys ?? [],
       availableProductEntityIdsByImageKey: input.availableProductEntityIdsByImageKey ?? {},
       maxOutputCount: input.maxOutputCount
     });
     if (!generationPlan.success) return generationPlan;
+    const plannedEntities =
+      generationPlan.data?.groups.flatMap((group) => group.subjectEntities) ?? [];
+    if (
+      input.currentRequirement &&
+      input.hasCurrentProductAttachments &&
+      plannedEntities.length > 0 &&
+      plannedEntities.every((entity) => entity.lineageKind === "new_product_source")
+    ) {
+      normalized = normalizeRequirementUpdate({
+        requirements,
+        currentRequirement: null,
+        defaults: input.defaults
+      });
+      if (!normalized.success) return normalized;
+    }
+    if (generationPlan.data) {
+      normalized = {
+        ...normalized,
+        finalRequirement: {
+          ...normalized.finalRequirement,
+          subjectPolicy: mergeGenerationPlanSubjectPolicies(generationPlan.data.groups)
+        },
+        changedFields: [...new Set([...normalized.changedFields, "subjectPolicy" as const])]
+      };
+    }
     const quantityDecision = normalizeQuantityDecision({
       value: command.data.quantityDecision,
       required: command.data.action === "generate",
@@ -256,6 +284,7 @@ function normalizeGenerationPlan(input: {
   required: boolean;
   availableImageKeys: string[];
   availableProductSourceImageKeys: string[];
+  availableReferenceImageKeys: string[];
   availableProductEntityIdsByImageKey: Record<string, string[]>;
   maxOutputCount: number;
 }):
@@ -318,6 +347,50 @@ function normalizeGenerationPlan(input: {
         {
           field: "generationPlan.groups.sourceImages.imageKey",
           message: `生图计划引用了不存在的图片句柄: ${[...new Set(unknownKeys)].join(", ")}`
+        }
+      ]
+    };
+  }
+  const invalidReferenceBindings = normalizedGroups.flatMap((group, groupIndex) => {
+    const invalid = group.sourceImages.some((source) => {
+      const isReferenceUsage = source.usage === "style_reference" || source.usage === "layout_cell";
+      const isReferenceImage = input.availableReferenceImageKeys.includes(source.imageKey);
+      return isReferenceUsage !== isReferenceImage;
+    });
+    const missingReference = input.availableReferenceImageKeys.some(
+      (key) => !group.sourceImages.some((source) => source.imageKey === key)
+    );
+    return invalid || missingReference ? [groupIndex] : [];
+  });
+  if (invalidReferenceBindings.length > 0) {
+    return {
+      success: false,
+      issues: [
+        {
+          field: "generationPlan.groups.sourceImages",
+          message:
+            "每个输出组都必须采用当前参考图；参考图只能使用 style_reference 或 layout_cell，其他图片不能使用参考图用途"
+        }
+      ]
+    };
+  }
+  const usedProductKeys = new Set(
+    normalizedGroups.flatMap((group) =>
+      group.sourceImages
+        .filter((source) => input.availableProductSourceImageKeys.includes(source.imageKey))
+        .map((source) => source.imageKey)
+    )
+  );
+  const missingProductKeys = input.availableProductSourceImageKeys.filter(
+    (key) => !usedProductKeys.has(key)
+  );
+  if (missingProductKeys.length > 0) {
+    return {
+      success: false,
+      issues: [
+        {
+          field: "generationPlan.groups.sourceImages",
+          message: `生图计划遗漏了本轮商品图: ${missingProductKeys.join(", ")}`
         }
       ]
     };
@@ -558,4 +631,21 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function mergeGenerationPlanSubjectPolicies(
+  groups: Array<{
+    subjectPolicy: {
+      defaultAction: "preserve";
+      allowedChanges: Array<{ feature: string; instruction: string }>;
+    };
+  }>
+) {
+  const changes = new Map<string, { feature: string; instruction: string }>();
+  for (const group of groups) {
+    for (const change of group.subjectPolicy.allowedChanges) {
+      changes.set(`${change.feature}\u0000${change.instruction}`, change);
+    }
+  }
+  return { defaultAction: "preserve" as const, allowedChanges: [...changes.values()] };
 }

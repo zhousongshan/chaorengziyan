@@ -48,7 +48,8 @@ import {
 } from "./prompt-optimization.repository.js";
 import {
   validatePromptOptimizationInput,
-  validatePromptOptimizationOutput
+  validatePromptOptimizationImageDecision,
+  validatePromptOptimizationText
 } from "./prompt-optimization-output.validator.js";
 import { PROMPT_OPTIMIZATION_PROMPT_VERSION } from "./prompt-optimization.prompt.js";
 
@@ -214,31 +215,58 @@ export class PromptOptimizationService {
           role
         }))
       };
-      const rawOutput = await this.ai.optimize(aiInput);
-      let validated = validatePromptOptimizationOutput(rawOutput, validationContext);
+      const rawDecision = await this.ai.decideImages(aiInput);
+      const decision = validatePromptOptimizationImageDecision(rawDecision, validationContext);
+      if (!decision.success) {
+        throw new PromptOptimizationAiResponseError();
+      }
+      if (decision.imageDecisionStatus === "missing") {
+        throw new PromptOptimizationImageDecisionError("missing");
+      }
+      if (decision.imageDecisionStatus === "ambiguous") {
+        throw new PromptOptimizationImageDecisionError("ambiguous");
+      }
+      const acceptedDecision = {
+        imageDecisionStatus: decision.imageDecisionStatus,
+        selectedImageKeys: decision.selectedImageKeys
+      } as const;
+      const selectedKeySet = new Set(decision.selectedImageKeys);
+      const selectedImages = images.filter((image) => selectedKeySet.has(image.key));
+      const optimizationInput: PromptOptimizationAiInput = {
+        ...aiInput,
+        limitedContext: {
+          agentInstruction: aiInput.limitedContext.agentInstruction,
+          currentRequirement: null
+        },
+        images: selectedImages
+      };
+      const rawOutput = await this.ai.optimize(optimizationInput);
+      let validated = validatePromptOptimizationText(
+        rawOutput,
+        validationContext,
+        acceptedDecision
+      );
       if (!validated.success) {
         const repairedOutput = await this.ai.repair({
-          ...aiInput,
+          ...optimizationInput,
           previousOutput: rawOutput,
           validationIssues: validated.issues
         });
-        validated = validatePromptOptimizationOutput(repairedOutput, validationContext);
+        validated = validatePromptOptimizationText(
+          repairedOutput,
+          validationContext,
+          acceptedDecision
+        );
       }
       if (!validated.success) {
         throw new PromptOptimizationAiResponseError();
-      }
-      if (validated.imageDecisionStatus === "missing") {
-        throw new PromptOptimizationImageDecisionError("missing");
-      }
-      if (validated.imageDecisionStatus === "ambiguous") {
-        throw new PromptOptimizationImageDecisionError("ambiguous");
       }
       if (!validated.optimizedText) throw new PromptOptimizationAiResponseError();
       return this.completeExecution(
         result.record,
         executionToken,
         validated.optimizedText,
-        validated.imageDecisionStatus,
+        acceptedDecision.imageDecisionStatus,
         validated.selectedImageKeys
       );
     } catch (error) {

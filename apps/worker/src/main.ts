@@ -8,7 +8,6 @@ import {
   environmentSchema,
   IMAGE_WORKER_HEARTBEAT_TTL_MS,
   imageWorkerHeartbeatKey,
-  type ImageGenerationJobData,
   type ImageGenerationUnitJobData,
   type SubjectConsistencyJobData
 } from "@chaoren/contracts";
@@ -56,7 +55,13 @@ const taskStore = new DrizzleImageGenerationTaskStore(database);
 const subjectTaskStore = new DrizzleSubjectConsistencyTaskStore(database);
 const imageQueue = new BullMqImageGenerationQueuePublisher(environment);
 const subjectQueue = new BullMqSubjectConsistencyQueuePublisher(environment);
-const outbox = new WorkflowOutboxDispatcher(database, imageQueue, subjectQueue);
+const outbox = new WorkflowOutboxDispatcher(
+  database,
+  imageQueue,
+  subjectQueue,
+  taskStore,
+  subjectTaskStore
+);
 const generator = new ImageGenerationRouter([
   new ByteDanceImageAdapter(environment),
   new OpenAiImageAdapter(environment)
@@ -87,7 +92,7 @@ const subjectConnection = new Redis(environment.REDIS_URL, {
   maxRetriesPerRequest: null
 });
 
-const imageWorker = new Worker<ImageGenerationJobData | ImageGenerationUnitJobData>(
+const imageWorker = new Worker<ImageGenerationUnitJobData>(
   environment.TASK_QUEUE_NAME,
   (job) => handler.handle(job),
   { connection: imageConnection, concurrency: environment.IMAGE_WORKER_CONCURRENCY }
@@ -137,17 +142,10 @@ async function recoverSubjectChecks(): Promise<void> {
 }
 
 async function recoverImageTasks(): Promise<void> {
-  const [units, legacyTaskIds] = await Promise.all([
-    taskStore.findRecoverableUnits(),
-    taskStore.findRecoverableIds()
-  ]);
+  const units = await taskStore.findRecoverableUnits();
   for (const unit of units) {
     await imageQueue.enqueueUnit(unit.taskId, unit.unitId);
     await outbox.markEntityPublished("generation.unit.enqueue", unit.unitId);
-  }
-  for (const taskId of legacyTaskIds) {
-    await imageQueue.enqueue(taskId);
-    await outbox.markEntityPublished("generation.task.enqueue", taskId);
   }
 }
 

@@ -341,7 +341,7 @@
 .textareaWrap textarea {
   display: block;
   width: 100%;
-  min-height: 42px;
+  min-height: 55px;
   max-height: 180px;
   padding: 9px 64px 7px 2px;
   overflow-y: auto;
@@ -374,66 +374,6 @@
   padding-top: 9px;
   gap: 12px;
   border-top: 1px solid #eef1f6;
-}
-
-.optimizationPanel {
-  display: flex;
-  align-items: center;
-  min-height: 38px;
-  margin-top: 8px;
-  padding: 6px 8px 6px 10px;
-  gap: 10px;
-  border: 1px solid #e2e5eb;
-  border-radius: 7px;
-  background: #fafbfc;
-}
-
-.optimizationPanel > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: #344054;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.optimizationPanel > p {
-  min-width: 0;
-  margin: 0;
-  flex: 1;
-  color: #b54708;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.optimizationPanel > div {
-  display: flex;
-  margin-left: auto;
-  gap: 5px;
-}
-
-.optimizationPanel button {
-  display: inline-flex;
-  min-height: 28px;
-  align-items: center;
-  padding: 0 8px;
-  gap: 4px;
-  border: 1px solid #d9dce3;
-  border-radius: 6px;
-  color: #475467;
-  background: #fff;
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.optimizationPanel svg {
-  width: 14px;
-  height: 14px;
-}
-
-.optimizationPanel button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .composerOptions {
@@ -492,6 +432,35 @@
 .optimizeButton svg {
   width: 15px;
   height: 15px;
+}
+
+.undoOptimizationButton {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 11px;
+  gap: 5px;
+  border: 1px solid #e1e5ee;
+  border-radius: 10px;
+  color: #475467;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.undoOptimizationButton:hover:not(:disabled) {
+  border-color: #cbd1dc;
+  background: #f8f9fb;
+}
+
+.undoOptimizationButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.undoOptimizationButton svg {
+  width: 14px;
+  height: 14px;
 }
 
 .generateButton {
@@ -1013,7 +982,8 @@
   }
 
   .compactSelect,
-  .optimizeButton {
+  .optimizeButton,
+  .undoOptimizationButton {
     padding-right: 9px;
     padding-left: 9px;
   }
@@ -1065,16 +1035,6 @@
   .composerActions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .optimizationPanel {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .optimizationPanel > p {
-    flex-basis: 100%;
-    order: 3;
   }
 
   .generateButton {

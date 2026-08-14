@@ -132,7 +132,20 @@ describe.skipIf(!enabled)("active image generation PostgreSQL contract", () => {
           resultAssets: [],
           error: null,
           createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+          updatedAt: new Date().toISOString(),
+          units: [
+            {
+              unitId: randomUUID(),
+              position: 0,
+              groupPosition: 0,
+              variantPosition: 0,
+              outputLayout: "separate_image",
+              instruction: "恢复后的下一次任务冻结执行单元",
+              qualitySourceAssetIds: [],
+              subjectEntities: [],
+              sources: []
+            }
+          ]
         })
       ).resolves.toMatchObject({ created: true, record: { taskId: ids.nextTask } });
     } finally {

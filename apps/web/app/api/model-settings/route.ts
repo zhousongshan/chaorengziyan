@@ -45,14 +45,10 @@ export async function PUT(request: Request) {
 
   const envPath = await findWorkspaceEnvironmentFile();
   const current = await readFile(envPath, "utf8");
-  const currentValues = parseEnvironmentFile(current);
-  const migratingLegacyRequirementModel =
-    currentValues.REQUIREMENT_AI_MODEL !== fixedModelConfiguration.REQUIREMENT_AI_MODEL;
   const next = updateModelEnvironmentFile(current, {
     requirementBaseUrl: parsed.data.requirementBaseUrl,
-    requirementApiKey:
-      parsed.data.requirementApiKey ||
-      (migratingLegacyRequirementModel ? currentValues.SUBJECT_INSPECTION_AI_API_KEY : undefined),
+    requirementApiKey: parsed.data.requirementApiKey || undefined,
+    requirementModel: parsed.data.requirementModel,
     promptOptimizationBaseUrl: parsed.data.promptOptimizationBaseUrl,
     promptOptimizationApiKey: parsed.data.promptOptimizationApiKey || undefined,
     promptOptimizationModel: parsed.data.promptOptimizationModel,
@@ -107,18 +103,9 @@ function toResponse(
   values: Record<string, string>,
   restartRequired: boolean
 ): ModelSettingsResponse {
-  const usesMultimodalRequirementConfiguration =
-    values.REQUIREMENT_AI_MODEL === fixedModelConfiguration.REQUIREMENT_AI_MODEL &&
-    Boolean(values.REQUIREMENT_AI_API_KEY);
-  const requirementBaseUrl = usesMultimodalRequirementConfiguration
-    ? values.REQUIREMENT_AI_BASE_URL
-    : values.SUBJECT_INSPECTION_AI_BASE_URL;
-  const requirementApiKey = usesMultimodalRequirementConfiguration
-    ? values.REQUIREMENT_AI_API_KEY
-    : values.SUBJECT_INSPECTION_AI_API_KEY;
-  const requirementModel = usesMultimodalRequirementConfiguration
-    ? values.REQUIREMENT_AI_MODEL
-    : values.SUBJECT_INSPECTION_AI_MODEL;
+  const requirementBaseUrl = values.REQUIREMENT_AI_BASE_URL;
+  const requirementApiKey = values.REQUIREMENT_AI_API_KEY;
+  const requirementModel = values.REQUIREMENT_AI_MODEL;
   const promptOptimizationDedicated = Boolean(values.PROMPT_OPTIMIZATION_AI_API_KEY);
   const promptOptimizationBaseUrl = promptOptimizationDedicated
     ? values.PROMPT_OPTIMIZATION_AI_BASE_URL || requirementBaseUrl

@@ -28,7 +28,104 @@ const currentRequirement: FinalRequirement = {
   subjectPolicy: { defaultAction: "preserve", allowedChanges: [] }
 };
 
+const atomicGroupDefaults = {
+  subjectPolicy: { defaultAction: "preserve" as const, allowedChanges: [] },
+  referenceAnalyses: [],
+  instruction: "按本分组当前需求生成"
+};
+
+const completeReferenceAnalysis = {
+  imageKey: "reference_1",
+  observedDesign: {
+    sellingPointPresentation: "左侧用标题和圆角标签表达卖点",
+    composition: "信息左置、商品右置",
+    informationHierarchy: "品牌、主标题、辅助卖点分三级",
+    typography: "粗体主标题搭配小号圆角标签",
+    colorAndLighting: "绿色主色与柔和棚拍光",
+    spacingAndRhythm: "左右分区并保留充足边距",
+    propsAndScene: "桌面道具形成前后层次"
+  },
+  transferPlan: {
+    adopt: ["采用左右分栏和三级信息层级"],
+    adapt: ["将参考商品信息替换为当前商品已知卖点"],
+    avoid: ["不复制参考商品、品牌和原文案"],
+    userPriority: ["优先参考版式和字体层级"]
+  }
+};
+
 describe("conversation requirement AI contract", () => {
+  it("rejects a reference image without its structured analysis", () => {
+    const normalized = normalizeConversationRequirementAiOutput({
+      currentRequirement,
+      defaults,
+      availableImageKeys: ["reference_1"],
+      availableTargetImageKeys: [],
+      maxOutputCount: 4,
+      rawOutput: referencePlanOutput([])
+    });
+
+    expect(normalized).toMatchObject({
+      success: false,
+      issues: [
+        {
+          field: expect.stringContaining("referenceAnalyses"),
+          message: "每张被采用的参考图必须恰好对应一份结构化参考分析"
+        }
+      ]
+    });
+  });
+
+  it("rejects a reference analysis bound to another image key", () => {
+    const normalized = normalizeConversationRequirementAiOutput({
+      currentRequirement,
+      defaults,
+      availableImageKeys: ["reference_1", "reference_2"],
+      availableTargetImageKeys: [],
+      maxOutputCount: 4,
+      rawOutput: referencePlanOutput([{ ...completeReferenceAnalysis, imageKey: "reference_2" }])
+    });
+
+    expect(normalized).toMatchObject({ success: false });
+  });
+
+  it("accepts one complete seven-dimension analysis for each reference image", () => {
+    const normalized = normalizeConversationRequirementAiOutput({
+      currentRequirement,
+      defaults,
+      availableImageKeys: ["reference_1"],
+      availableTargetImageKeys: [],
+      maxOutputCount: 4,
+      rawOutput: referencePlanOutput([completeReferenceAnalysis])
+    });
+
+    expect(normalized).toMatchObject({
+      success: true,
+      data: {
+        generationPlan: {
+          schemaVersion: "3.0",
+          groups: [
+            {
+              referenceAnalyses: [
+                {
+                  imageKey: "reference_1",
+                  observedDesign: {
+                    informationHierarchy: "品牌、主标题、辅助卖点分三级",
+                    typography: "粗体主标题搭配小号圆角标签"
+                  },
+                  transferPlan: {
+                    adopt: ["采用左右分栏和三级信息层级"],
+                    adapt: ["将参考商品信息替换为当前商品已知卖点"],
+                    avoid: ["不复制参考商品、品牌和原文案"]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    });
+  });
+
   it("preserves separate quality lineage for multiple product entities", () => {
     const normalized = normalizeConversationRequirementAiOutput({
       currentRequirement,
@@ -48,10 +145,11 @@ describe("conversation requirement AI contract", () => {
           rule: "文字和页面均无新数量，沿用当前需求"
         },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "两个商品共同生成一张主图",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [
                 { imageKey: "cauliflower_front", usage: "subject_fact" },
                 { imageKey: "drumstick_front", usage: "subject_fact" }
@@ -118,9 +216,10 @@ describe("conversation requirement AI contract", () => {
         },
         requirements: {},
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "四张原图各自生成一张独立结果",
           groups: ["image_1", "image_2", "image_3", "image_4"].map((imageKey) => ({
+            ...atomicGroupDefaults,
             sourceImages: [{ imageKey, usage: "edit_target" }],
             subjectEntities: [
               {
@@ -194,10 +293,11 @@ describe("conversation requirement AI contract", () => {
           evidenceEnd: evidenceStart + evidenceQuote.length
         },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "生成两张独立结果",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [],
               outputCount: 2,
               outputLayout: "separate_image"
@@ -240,10 +340,11 @@ describe("conversation requirement AI contract", () => {
           evidenceEnd: evidenceStart + evidenceQuote.length
         },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "生成两张独立结果",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [],
               outputCount: 2,
               outputLayout: "separate_image"
@@ -282,10 +383,11 @@ describe("conversation requirement AI contract", () => {
           evidenceEnd: evidenceStart + evidenceQuote.length
         },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "生成四张独立结果",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [],
               outputCount: 4,
               outputLayout: "separate_image"
@@ -314,10 +416,11 @@ describe("conversation requirement AI contract", () => {
         assistantReply: "按文字要求生成四张",
         requirements: { imageCount: 4 },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "错误地只规划三张",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [{ imageKey: "image_1", usage: "edit_target" }],
               outputCount: 3,
               outputLayout: "separate_image"
@@ -343,10 +446,11 @@ describe("conversation requirement AI contract", () => {
         assistantReply: "开始生成",
         requirements: {},
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "处理一张图",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [{ imageKey: "image_99", usage: "edit_target" }],
               outputCount: 1,
               outputLayout: "separate_image"
@@ -529,3 +633,31 @@ describe("conversation requirement AI contract", () => {
     });
   });
 });
+
+function referencePlanOutput(referenceAnalyses: unknown[]) {
+  return {
+    contractVersion: "4.0",
+    action: "generate",
+    assistantReply: "开始生成",
+    requirements: {},
+    quantityDecision: {
+      source: "previous_requirement",
+      value: 1,
+      rule: "沿用当前需求数量"
+    },
+    generationPlan: {
+      schemaVersion: "3.0",
+      summary: "迁移参考图设计语言",
+      groups: [
+        {
+          ...atomicGroupDefaults,
+          sourceImages: [{ imageKey: "reference_1", usage: "style_reference" }],
+          referenceAnalyses,
+          outputCount: 1,
+          outputLayout: "separate_image",
+          instruction: "迁移左右分栏、信息层级和字体规则"
+        }
+      ]
+    }
+  };
+}

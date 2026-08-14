@@ -1,8 +1,12 @@
 import {
   BadGatewayException,
   BadRequestException,
+  GatewayTimeoutException,
+  HttpException,
+  HttpStatus,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException
 } from "@nestjs/common";
@@ -26,7 +30,7 @@ import {
   type ConversationRequirementImage,
   type RequirementAiPort
 } from "./requirement-ai.port.js";
-import { RequirementAiConfigurationError } from "./requirement-ai.errors.js";
+import { normalizeRequirementAiError, RequirementAiError } from "./requirement-ai.errors.js";
 import {
   CONVERSATION_REQUIREMENT_CONTRACT_VERSION,
   normalizeConversationRequirementAiOutput
@@ -35,6 +39,7 @@ import {
   REQUIREMENT_AI_ATTEMPT_REPOSITORY,
   type RequirementAiAttemptRepository
 } from "./requirement-ai-attempt.repository.js";
+import type { RequirementAiAttemptPhase } from "./requirement-ai-attempt.repository.js";
 import { getConversationRequirementConfiguration } from "./conversation-requirement.configuration.js";
 import { CONVERSATION_REQUIREMENT_PROMPT_VERSION } from "./requirement.prompt.js";
 import { RequirementResultValidator } from "./requirement-result.validator.js";
@@ -45,6 +50,8 @@ import {
 
 @Injectable()
 export class RequirementService {
+  private readonly logger = new Logger(RequirementService.name);
+
   public constructor(
     @Inject(ENVIRONMENT) private readonly environment: Environment,
     @Inject(AUTHORIZATION_PORT) private readonly authorization: AuthorizationPort,
@@ -83,17 +90,29 @@ export class RequirementService {
 
     const request = parsedRequest.data;
     await this.assertRequestResources(request);
+    const effectiveContext = isolateFreshProductContext(context);
+    const hasCurrentProductAttachments = context.currentTurn.attachments.some(
+      (attachment) => attachment.role === "product_source"
+    );
     const selectedModel = this.imageModels.getEnabled(request.modelId);
     const constraints = {
       maxImageCount: Math.min(4, selectedModel.maxImageCount),
       allowedAspectRatios: selectedModel.supportedAspectRatios
     };
-    const rawOutput = await this.callAi(() =>
-      this.requirementAi.resolveConversation(context, constraints, images)
-    );
+    const deadline = Date.now() + this.environment.REQUIREMENT_AI_TURN_BUDGET_MS;
+    const attemptSequence = { next: 1 };
+    const firstCall = await this.callAi({
+      trace,
+      phase: "resolve",
+      deadline,
+      attemptSequence,
+      operation: (options) =>
+        this.requirementAi.resolveConversation(effectiveContext, constraints, images, options)
+    });
+    const rawOutput = firstCall.rawOutput;
     const firstContract = normalizeConversationRequirementAiOutput({
       rawOutput,
-      currentRequirement: context.sessionState.currentRequirement,
+      currentRequirement: effectiveContext.sessionState.currentRequirement,
       defaults: {
         userText: request.userText,
         imageCount: request.imageSettings.imageCount ?? 1,
@@ -106,27 +125,40 @@ export class RequirementService {
       availableProductSourceImageKeys: images
         .filter((image) => image.role === "product_source")
         .map((image) => image.key),
+      availableReferenceImageKeys: images
+        .filter((image) => image.role === "user_reference")
+        .map((image) => image.key),
       availableProductEntityIdsByImageKey: Object.fromEntries(
         images.map((image) => [image.key, image.productEntities.map((entity) => entity.id)])
       ),
+      hasCurrentProductAttachments,
       maxOutputCount: constraints.maxImageCount
     });
-    await this.saveConversationAttempt(trace, 1, rawOutput, firstContract);
+    await this.completeAttempt(firstCall, firstContract, rawOutput);
     let normalized = firstContract;
     if (!normalized.success) {
       const validationIssues = normalized.issues;
-      const repairedRawOutput = await this.callAi(() =>
-        this.requirementAi.repairConversation({
-          originalInput: context,
-          previousOutput: rawOutput,
-          validationIssues,
-          constraints,
-          images
-        })
-      );
+      const repairedCall = await this.callAi({
+        trace,
+        phase: "repair",
+        deadline,
+        attemptSequence,
+        operation: (options) =>
+          this.requirementAi.repairConversation(
+            {
+              originalInput: effectiveContext,
+              previousOutput: rawOutput,
+              validationIssues,
+              constraints,
+              images
+            },
+            options
+          )
+      });
+      const repairedRawOutput = repairedCall.rawOutput;
       normalized = normalizeConversationRequirementAiOutput({
         rawOutput: repairedRawOutput,
-        currentRequirement: context.sessionState.currentRequirement,
+        currentRequirement: effectiveContext.sessionState.currentRequirement,
         defaults: {
           userText: request.userText,
           imageCount: request.imageSettings.imageCount ?? 1,
@@ -139,12 +171,16 @@ export class RequirementService {
         availableProductSourceImageKeys: images
           .filter((image) => image.role === "product_source")
           .map((image) => image.key),
+        availableReferenceImageKeys: images
+          .filter((image) => image.role === "user_reference")
+          .map((image) => image.key),
         availableProductEntityIdsByImageKey: Object.fromEntries(
           images.map((image) => [image.key, image.productEntities.map((entity) => entity.id)])
         ),
+        hasCurrentProductAttachments,
         maxOutputCount: constraints.maxImageCount
       });
-      await this.saveConversationAttempt(trace, 2, repairedRawOutput, normalized);
+      await this.completeAttempt(repairedCall, normalized, repairedRawOutput);
     }
     if (!normalized.success) {
       throw new BadGatewayException({
@@ -183,42 +219,112 @@ export class RequirementService {
     return { requirementRunId: run.id, result: run.result };
   }
 
-  private async callAi(operation: () => Promise<unknown>): Promise<unknown> {
-    try {
-      return await operation();
-    } catch (error) {
-      if (error instanceof RequirementAiConfigurationError) {
-        throw new ServiceUnavailableException({
-          code: "REQUIREMENT_AI_NOT_CONFIGURED",
-          message: error.message
-        });
+  private async callAi(input: {
+    trace: { sessionId: string; sourceMessageId: string } | undefined;
+    phase: RequirementAiAttemptPhase;
+    deadline: number;
+    attemptSequence: { next: number };
+    operation: (options: { timeoutMs: number }) => Promise<unknown>;
+  }): Promise<{ rawOutput: unknown; attemptId: string | null; startedAt: number }> {
+    const configuration = getConversationRequirementConfiguration(this.environment);
+    let phaseAttemptNumber = 0;
+    while (true) {
+      phaseAttemptNumber += 1;
+      const remainingMs = input.deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw this.toHttpException(
+          new RequirementAiError(
+            "REQUIREMENT_AI_TIMEOUT",
+            "request",
+            false,
+            504,
+            "本次需求理解等待时间过长",
+            { budgetMs: this.environment.REQUIREMENT_AI_TURN_BUDGET_MS }
+          )
+        );
       }
-      throw new BadGatewayException({
-        code: "REQUIREMENT_AI_REQUEST_FAILED",
-        message: error instanceof Error ? error.message : "需求AI调用失败"
-      });
+      const attemptNumber = input.attemptSequence.next++;
+      const startedAt = Date.now();
+      const attemptId = input.trace
+        ? await this.requirementAiAttempts.begin({
+            ...input.trace,
+            attemptNumber,
+            phase: input.phase,
+            phaseAttemptNumber,
+            aiModel: configuration.model,
+            promptVersion: CONVERSATION_REQUIREMENT_PROMPT_VERSION,
+            contractVersion: CONVERSATION_REQUIREMENT_CONTRACT_VERSION,
+            startedAt: new Date(startedAt)
+          })
+        : null;
+      try {
+        const rawOutput = await input.operation({
+          timeoutMs: Math.min(configuration.timeoutMs, remainingMs)
+        });
+        return { rawOutput, attemptId, startedAt };
+      } catch (error) {
+        const normalized = normalizeRequirementAiError(error);
+        const completedAt = Date.now();
+        if (attemptId) {
+          await this.requirementAiAttempts
+            .fail({
+              id: attemptId,
+              errorCode: normalized.code,
+              errorPhase: normalized.phase,
+              errorDetails: normalized.diagnostics,
+              completedAt: new Date(completedAt),
+              durationMs: completedAt - startedAt
+            })
+            .catch((persistenceError: unknown) => {
+              this.logger.error(
+                `需求 AI 失败调用记录写入失败: ${persistenceError instanceof Error ? persistenceError.message : String(persistenceError)}`
+              );
+            });
+        }
+        const nextRemainingMs = input.deadline - completedAt;
+        if (
+          phaseAttemptNumber === 1 &&
+          shouldRetryRequirementAi(normalized, completedAt - startedAt, nextRemainingMs)
+        ) {
+          await delay(Math.min(500, Math.max(1, nextRemainingMs - 1)));
+          continue;
+        }
+        throw this.toHttpException(normalized);
+      }
     }
   }
 
-  private async saveConversationAttempt(
-    trace: { sessionId: string; sourceMessageId: string } | undefined,
-    attemptNumber: 1 | 2,
-    rawOutput: unknown,
-    validation: ReturnType<typeof normalizeConversationRequirementAiOutput>
+  private async completeAttempt(
+    call: { attemptId: string | null; startedAt: number },
+    validation: ReturnType<typeof normalizeConversationRequirementAiOutput>,
+    rawOutput?: unknown
   ): Promise<void> {
-    if (!trace) return;
-    await this.requirementAiAttempts
-      .save({
-        ...trace,
-        attemptNumber,
-        status: validation.success ? "contract_valid" : "contract_invalid",
-        rawOutput,
-        validationIssues: validation.success ? [] : validation.issues,
-        aiModel: getConversationRequirementConfiguration(this.environment).model,
-        promptVersion: CONVERSATION_REQUIREMENT_PROMPT_VERSION,
-        contractVersion: CONVERSATION_REQUIREMENT_CONTRACT_VERSION
-      })
-      .catch(() => undefined);
+    if (!call.attemptId) return;
+    await this.requirementAiAttempts.complete({
+      id: call.attemptId,
+      status: validation.success ? "contract_valid" : "contract_invalid",
+      rawOutput: rawOutput ?? validation,
+      validationIssues: validation.success ? [] : validation.issues,
+      completedAt: new Date(),
+      durationMs: Date.now() - call.startedAt
+    });
+  }
+
+  private toHttpException(error: RequirementAiError): Error {
+    const response = { code: error.code, message: error.publicMessage };
+    if (error.code === "REQUIREMENT_AI_TIMEOUT") return new GatewayTimeoutException(response);
+    if (error.code === "REQUIREMENT_AI_RATE_LIMITED") {
+      return new HttpException(response, HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (
+      error.code === "REQUIREMENT_AI_NOT_CONFIGURED" ||
+      error.code === "REQUIREMENT_AI_AUTH_FAILED" ||
+      error.code === "REQUIREMENT_AI_CAPABILITY_UNSUPPORTED" ||
+      error.code === "REQUIREMENT_AI_SERVICE_UNAVAILABLE"
+    ) {
+      return new ServiceUnavailableException(response);
+    }
+    return new BadGatewayException(response);
   }
 
   private async assertRequestResources(request: ResolveRequirementRequest): Promise<void> {
@@ -251,4 +357,44 @@ function requestAssetIds(request: ResolveRequirementRequest): string[] {
         : [])
     ])
   ];
+}
+
+function shouldRetryRequirementAi(
+  error: RequirementAiError,
+  durationMs: number,
+  remainingMs: number
+): boolean {
+  if (!error.retryable || remainingMs <= 1_000 || durationMs > 30_000) return false;
+  return (
+    error.code === "REQUIREMENT_AI_RATE_LIMITED" ||
+    error.code === "REQUIREMENT_AI_SERVICE_UNAVAILABLE"
+  );
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isolateFreshProductContext(
+  context: ConversationRequirementContext
+): ConversationRequirementContext {
+  const currentProducts = context.currentTurn.attachments.filter(
+    (attachment) => attachment.role === "product_source"
+  );
+  const editsExistingImage = context.currentTurn.attachments.some(
+    (attachment) => attachment.role === "edit_base"
+  );
+  if (currentProducts.length === 0 || editsExistingImage) return context;
+  return {
+    ...context,
+    sessionState: {
+      ...context.sessionState,
+      activeProductAssetIds: currentProducts.map((attachment) => attachment.assetId),
+      editBaseAssetId: null,
+      currentGenerationPlan: null,
+      currentRequirement: null,
+      unresolvedQuestions: [],
+      fieldSources: {}
+    }
+  };
 }

@@ -2,6 +2,7 @@ import type {
   GenerationOutputLayout,
   GenerationSourceUsage,
   ResolvedGenerationPlan,
+  FinalRequirement,
   ImageGenerationError,
   ImageGenerationStatus,
   MediaAssetResponse,
@@ -20,6 +21,7 @@ export interface ImageGenerationUnitRecord {
   variantPosition: number;
   outputLayout: GenerationOutputLayout;
   instruction: string | null;
+  requirementSnapshot?: FinalRequirement | null;
   status?: ImageGenerationStatus;
   attemptCount?: number;
   stageStartedAt?: string;
@@ -105,7 +107,6 @@ export interface ImageGenerationTaskRepository {
     userId: string
   ): Promise<ImageGenerationTaskRecord | undefined>;
   findRecoverableUnits(): Promise<Array<{ taskId: string; unitId: string }>>;
-  findRecoverableLegacyTaskIds(): Promise<string[]>;
   cancel(
     id: string,
     userId: string

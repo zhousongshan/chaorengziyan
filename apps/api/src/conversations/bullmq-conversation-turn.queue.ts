@@ -107,6 +107,7 @@ export class BullMqConversationTurnQueue
       const messageIds = await this.conversations.findDispatchableTurnMessageIds({
         now: new Date().toISOString(),
         maxAttempts: this.environment.CONVERSATION_TURN_MAX_ATTEMPTS,
+        maxEnqueueAttempts: this.environment.CONVERSATION_TURN_MAX_ENQUEUE_ATTEMPTS,
         limit: 100
       });
       await Promise.allSettled(messageIds.map((messageId) => this.enqueue(messageId)));

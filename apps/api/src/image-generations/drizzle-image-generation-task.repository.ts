@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, inArray, isNull, lte, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import {
   creationRuns,
@@ -20,7 +20,7 @@ import {
   workflowEvents,
   type DatabaseConnection
 } from "@chaoren/database";
-import type { ImageGenerationError } from "@chaoren/contracts";
+import { finalRequirementSchema, type ImageGenerationError } from "@chaoren/contracts";
 
 import { DATABASE_CONNECTION } from "../database/database.constants.js";
 import {
@@ -63,6 +63,10 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
     record: ImageGenerationTaskRecord,
     regeneration?: ImageGenerationRegenerationRecord
   ): Promise<{ record: ImageGenerationTaskRecord; created: boolean }> {
+    if (!record.units || record.units.length === 0) {
+      throw new Error("生图任务必须包含至少一个冻结执行单元");
+    }
+    const units = record.units;
     const inserted = await this.connection.db.transaction(async (transaction) => {
       if (record.sessionId) {
         await transaction.execute(
@@ -409,6 +413,7 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
             variantPosition: unit.variantPosition,
             outputLayout: unit.outputLayout,
             instruction: unit.instruction,
+            requirementSnapshot: unit.requirementSnapshot,
             status: "queued" as const,
             createdAt: new Date(record.createdAt),
             updatedAt: new Date(record.updatedAt)
@@ -467,26 +472,14 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
           createdAt: new Date(record.createdAt)
         });
       }
-      const events =
-        record.units && record.units.length > 0
-          ? record.units.map((unit, index) => ({
-              runId: record.taskId,
-              sequence: index + 1,
-              eventType: "generation.unit.enqueue",
-              entityType: "generation_unit",
-              entityId: unit.unitId,
-              payload: { taskId: record.taskId, unitId: unit.unitId }
-            }))
-          : [
-              {
-                runId: record.taskId,
-                sequence: 1,
-                eventType: "generation.task.enqueue",
-                entityType: "generation_task",
-                entityId: record.taskId,
-                payload: { taskId: record.taskId }
-              }
-            ];
+      const events = units.map((unit, index) => ({
+        runId: record.taskId,
+        sequence: index + 1,
+        eventType: "generation.unit.enqueue",
+        entityType: "generation_unit",
+        entityId: unit.unitId,
+        payload: { taskId: record.taskId, unitId: unit.unitId }
+      }));
       await transaction.insert(workflowEvents).values(events);
       return rows;
     });
@@ -522,10 +515,7 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
           and(
             isNull(workflowEvents.publishedAt),
             lte(workflowEvents.availableAt, new Date()),
-            inArray(workflowEvents.eventType, [
-              "generation.unit.enqueue",
-              "generation.task.enqueue"
-            ])
+            eq(workflowEvents.eventType, "generation.unit.enqueue")
           )
         )
         .orderBy(asc(workflowEvents.createdAt))
@@ -780,6 +770,9 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
           variantPosition: unit.variantPosition,
           outputLayout: unit.outputLayout as ImageGenerationUnitRecord["outputLayout"],
           instruction: unit.instruction,
+          requirementSnapshot: unit.requirementSnapshot
+            ? finalRequirementSchema.parse(unit.requirementSnapshot)
+            : null,
           status: unit.status,
           attemptCount: attemptRows.filter((attempt) => attempt.unitId === unit.id).length,
           stageStartedAt: stageStartedAt.toISOString(),
@@ -832,7 +825,7 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
                     code:
                       check.errorCode ??
                       (check.status === "source_unusable"
-                        ? "SOURCE_IMAGE_REPLACEMENT_REQUIRED"
+                        ? "SUBJECT_INSPECTION_INCONCLUSIVE"
                         : check.status === "completed"
                           ? "SUBJECT_CONSISTENCY_FAILED"
                           : "SUBJECT_CONSISTENCY_EXECUTION_FAILED"),
@@ -929,24 +922,6 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
         )
       );
     return rows;
-  }
-
-  public async findRecoverableLegacyTaskIds(): Promise<string[]> {
-    const tasks = await this.connection.db
-      .select({ id: generationTasks.id })
-      .from(generationTasks)
-      .where(
-        and(
-          inArray(generationTasks.status, ["queued", "running"]),
-          notExists(
-            this.connection.db
-              .select({ id: generationTaskUnits.id })
-              .from(generationTaskUnits)
-              .where(eq(generationTaskUnits.taskId, generationTasks.id))
-          )
-        )
-      );
-    return tasks.map((task) => task.id);
   }
 
   public async cancel(

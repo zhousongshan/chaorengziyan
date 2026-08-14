@@ -85,9 +85,9 @@ curl http://127.0.0.1:3001/api/v1/projects \
 使用真实模型前，在 `.env` 配置：
 
 ```dotenv
-REQUIREMENT_AI_BASE_URL=https://api.deepseek.com
+REQUIREMENT_AI_BASE_URL=https://jennyapi.site/v1
 REQUIREMENT_AI_API_KEY=your-key
-REQUIREMENT_AI_MODEL=deepseek-v4-flash
+REQUIREMENT_AI_MODEL=gpt-5.6-sol
 ```
 
 请求示例：
@@ -186,7 +186,6 @@ Worker参数：
 ```dotenv
 IMAGE_WORKER_CONCURRENCY=2
 # 仅用于历史整任务队列；独立输出单元固定为首次执行加一次重试
-IMAGE_JOB_ATTEMPTS=3
 IMAGE_JOB_BACKOFF_MS=2000
 ```
 

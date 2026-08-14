@@ -4,12 +4,11 @@ import { workflowEvents, type DatabaseConnection } from "@chaoren/database";
 
 import type { ImageGenerationQueuePublisher } from "./image-generation.queue.js";
 import type { SubjectConsistencyQueuePublisher } from "./subject-consistency.queue.js";
+import type { ImageGenerationTaskStore } from "./image-generation-task.store.js";
+import type { SubjectConsistencyTaskStore } from "./subject-consistency-task.store.js";
 
-const dispatchableEventTypes = [
-  "generation.task.enqueue",
-  "generation.unit.enqueue",
-  "subject.check.enqueue"
-] as const;
+const dispatchableEventTypes = ["generation.unit.enqueue", "subject.check.enqueue"] as const;
+const MAX_PUBLISH_ATTEMPTS = 12;
 
 interface PendingDispatch {
   eventId: string;
@@ -25,7 +24,9 @@ export class WorkflowOutboxDispatcher {
   public constructor(
     private readonly connection: DatabaseConnection,
     private readonly imageQueue: ImageGenerationQueuePublisher,
-    private readonly subjectQueue: SubjectConsistencyQueuePublisher
+    private readonly subjectQueue: SubjectConsistencyQueuePublisher,
+    private readonly imageTasks: ImageGenerationTaskStore,
+    private readonly subjectTasks: SubjectConsistencyTaskStore
   ) {}
 
   public async dispatchPending(limit = 100): Promise<void> {
@@ -42,6 +43,9 @@ export class WorkflowOutboxDispatcher {
             event.eventId,
             error instanceof Error ? error.message : "队列投递失败"
           );
+          if ((await this.publishAttempts(event.eventId)) >= MAX_PUBLISH_ATTEMPTS) {
+            await this.markTerminal(event);
+          }
         }
       }
     } finally {
@@ -74,7 +78,9 @@ export class WorkflowOutboxDispatcher {
         .where(
           and(
             isNull(workflowEvents.publishedAt),
+            isNull(workflowEvents.terminalAt),
             lte(workflowEvents.availableAt, new Date()),
+            sql`${workflowEvents.publishAttempts} < ${MAX_PUBLISH_ATTEMPTS}`,
             inArray(workflowEvents.eventType, [...dispatchableEventTypes])
           )
         )
@@ -113,10 +119,6 @@ export class WorkflowOutboxDispatcher {
       await this.imageQueue.enqueueUnit(event.taskId, event.unitId);
       return;
     }
-    if (event.eventType === "generation.task.enqueue" && event.taskId) {
-      await this.imageQueue.enqueue(event.taskId);
-      return;
-    }
     if (event.eventType === "subject.check.enqueue" && event.checkId) {
       await this.subjectQueue.enqueue(event.checkId);
       return;
@@ -136,6 +138,34 @@ export class WorkflowOutboxDispatcher {
       .update(workflowEvents)
       .set({ lastError: error.slice(0, 2_000), availableAt: new Date(Date.now() + 5_000) })
       .where(and(eq(workflowEvents.id, eventId), isNull(workflowEvents.publishedAt)));
+  }
+
+  private async publishAttempts(eventId: string): Promise<number> {
+    const [row] = await this.connection.db
+      .select({ attempts: workflowEvents.publishAttempts })
+      .from(workflowEvents)
+      .where(eq(workflowEvents.id, eventId))
+      .limit(1);
+    return row?.attempts ?? MAX_PUBLISH_ATTEMPTS;
+  }
+
+  private async markTerminal(event: PendingDispatch): Promise<void> {
+    await this.connection.db
+      .update(workflowEvents)
+      .set({
+        terminalAt: new Date(),
+        publishedAt: new Date(),
+        lastError: "队列投递失败，已达到自动恢复上限"
+      })
+      .where(and(eq(workflowEvents.id, event.eventId), isNull(workflowEvents.terminalAt)));
+    if (event.eventType === "generation.unit.enqueue" && event.taskId && event.unitId) {
+      await this.imageTasks.markQueueDeliveryFailed(event.unitId);
+    } else if (event.eventType === "subject.check.enqueue" && event.checkId) {
+      await this.subjectTasks.markExecutionFailed(event.checkId, {
+        code: "SUBJECT_CONSISTENCY_QUEUE_UNAVAILABLE",
+        message: "图片检查队列投递失败，已达到自动恢复上限"
+      });
+    }
   }
 }
 

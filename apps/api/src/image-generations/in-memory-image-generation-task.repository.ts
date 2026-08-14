@@ -23,6 +23,9 @@ export class InMemoryImageGenerationTaskRepository implements ImageGenerationTas
     record: ImageGenerationTaskRecord;
     created: boolean;
   }> {
+    if (!record.units || record.units.length === 0) {
+      throw new Error("生图任务必须包含至少一个冻结执行单元");
+    }
     const existing = [...this.records.values()].find(
       (candidate) =>
         candidate.userId === record.userId && candidate.idempotencyKey === record.idempotencyKey
@@ -190,15 +193,6 @@ export class InMemoryImageGenerationTaskRepository implements ImageGenerationTas
             )
             .map((unit) => ({ taskId: record.taskId, unitId: unit.unitId }))
         )
-    );
-  }
-
-  public findRecoverableLegacyTaskIds(): Promise<string[]> {
-    return Promise.resolve(
-      [...this.records.values()]
-        .filter((record) => record.status === "queued" || record.status === "running")
-        .filter((record) => !record.units || record.units.length === 0)
-        .map((record) => record.taskId)
     );
   }
 

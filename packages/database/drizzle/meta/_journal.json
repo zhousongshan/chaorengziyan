@@ -246,6 +246,27 @@
       "when": 1786589219276,
       "tag": "0034_solid_raider",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786616109854,
+      "tag": "0035_fresh_harry_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786678852792,
+      "tag": "0036_aspiring_thunderball",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786679374281,
+      "tag": "0037_lame_bastion",
+      "breakpoints": true
     }
   ]
 }

@@ -9,6 +9,7 @@ export const fixedModelConfiguration = {
 export interface ModelEnvironmentUpdate {
   requirementBaseUrl: string;
   requirementApiKey?: string | undefined;
+  requirementModel: string;
   promptOptimizationBaseUrl?: string | undefined;
   promptOptimizationApiKey?: string | undefined;
   promptOptimizationModel?: string | undefined;
@@ -36,7 +37,7 @@ export function updateModelEnvironmentFile(
 ): string {
   const values: Record<string, string> = {
     REQUIREMENT_AI_BASE_URL: update.requirementBaseUrl,
-    REQUIREMENT_AI_MODEL: fixedModelConfiguration.REQUIREMENT_AI_MODEL,
+    REQUIREMENT_AI_MODEL: update.requirementModel,
     SUBJECT_INSPECTION_AI_BASE_URL: update.inspectionBaseUrl,
     SUBJECT_INSPECTION_AI_MODEL: fixedModelConfiguration.SUBJECT_INSPECTION_AI_MODEL,
     OPENAI_IMAGE_BASE_URL: update.imageBaseUrl,

@@ -29,6 +29,7 @@ import {
   type WheelEvent as ReactWheelEvent
 } from "react";
 import { useForm, useWatch, type Control, type UseFormRegister } from "react-hook-form";
+import { createPortal } from "react-dom";
 import { z } from "zod";
 
 import type {
@@ -137,12 +138,7 @@ type EditResultTarget = { asset: MediaAssetResponse; name: string };
 type PromptOptimizationUiState = {
   record: PromptOptimization;
   contextSignature: string;
-  history: Array<{
-    text: string;
-    record: PromptOptimization | null;
-    contextSignature: string | null;
-  }>;
-  error: string | null;
+  undoText: string | null;
 };
 type WorkbenchComposerProps = Omit<
   ComponentProps<typeof NormalModeComposer>,
@@ -373,15 +369,14 @@ export function ImageWorkbench() {
   useEffect(() => {
     const record = promptOptimizationQuery.data;
     if (!record || record.id !== promptOptimization?.record.id) return;
+    if (record.status === "failed") {
+      setUploadError(presentUserErrorCode(record.errorCode).message);
+    }
     setPromptOptimization((current) =>
       current?.record.id === record.id
         ? {
             ...current,
-            record,
-            error:
-              record.status === "failed"
-                ? presentUserErrorCode(record.errorCode).message
-                : current.error
+            record
           }
         : current
     );
@@ -769,7 +764,9 @@ export function ImageWorkbench() {
         ...(input.referenceAssetIds ?? []).map((assetId) => ({
           assetId,
           role: "user_reference" as const,
-          relation: referencePrompt.trim() || "仅参考该图的场景、构图或视觉风格，不作为商品主体事实"
+          relation:
+            referencePrompt.trim() ||
+            "先理解参考图的优点、问题、版式和文字层级，再按当前商品重新设计；默认不复制参考商品、品牌或原文案，可规划非事实型创意文字"
         }))
       ]
     });
@@ -828,8 +825,12 @@ export function ImageWorkbench() {
         goal: formValues.goal,
         style: formValues.style,
         editBaseAssetId: editBaseImage?.assetId ?? null,
-        productAssetIds: localProductAssetIds,
-        referenceAssetIds: effectiveReferenceAssetIds,
+        productAssetIds: productImages.map((image) => `draft:${image.clientId}`),
+        referenceAssetIds: referencePreviews.map((preview) =>
+          preview.kind === "restored"
+            ? `restored:${preview.assetId}`
+            : `draft:${referenceImages[preview.index]!.clientId}`
+        ),
         referencePrompt
       });
       const adoptedOptimizationId =
@@ -1137,19 +1138,23 @@ export function ImageWorkbench() {
     )
   ]);
   const historicalGenerationResults = indexHistoricalGenerationResults(sessionGenerationTasks);
-  const failedConversationMessage = [...(conversationHistory?.messages ?? [])]
-    .reverse()
-    .find(
-      (message) =>
-        message.role === "user" &&
-        message.status === "failed" &&
-        message.turnNumber === (conversationHistory?.session.version ?? -1) + 1
-    );
-  const conversationTurnError = failedConversationMessage
-    ? presentUserErrorCode(failedConversationMessage.errorCode ?? "CONVERSATION_TURN_FAILED")
-    : null;
-  const workflowError =
-    runError ?? conversationTurnError ?? deriveWorkflowError(activeGenerationTask, subjectChecks);
+  const latestUserMessage = [...(conversationHistory?.messages ?? [])]
+    .filter((message) => message.role === "user")
+    .at(-1);
+  const failedConversationMessage =
+    latestUserMessage?.status === "failed" ? latestUserMessage : undefined;
+  const conversationTurnErrors = useMemo(() => {
+    const byTurn = new Map<number, UserErrorPresentation>();
+    for (const message of conversationHistory?.messages ?? []) {
+      if (message.role !== "user" || message.status !== "failed") continue;
+      byTurn.set(
+        message.turnNumber,
+        presentUserErrorCode(message.errorCode ?? "CONVERSATION_TURN_FAILED")
+      );
+    }
+    return byTurn;
+  }, [conversationHistory?.messages]);
+  const workflowError = runError ?? deriveWorkflowError(activeGenerationTask, subjectChecks);
   const generationProcessing = generationView.generationProcessing;
   const submitAvailability = deriveSubmitAvailability({
     agentBindingRequired: false,
@@ -1176,10 +1181,19 @@ export function ImageWorkbench() {
     queryError(imageModelsQuery.error) ||
     queryError(currentConversationQuery.error) ||
     queryError(conversationQuery.error) ||
+    queryError(readinessQuery.error) ||
     queryError(olderMessagesMutation.error) ||
     queryError(recoveredRequirementQuery.error) ||
+    queryError(promptOptimizationQuery.error) ||
     queryError(generationQuery.error) ||
-    queryError(subjectChecksQuery.error);
+    queryError(subjectChecksQuery.error) ||
+    queryError(activeSessionGenerationQuery.error) ||
+    sessionGenerationQueries
+      .map((query) => queryError(query.error))
+      .find((message) => Boolean(message)) ||
+    historicalSubjectQueries
+      .map((query) => queryError(query.error))
+      .find((message) => Boolean(message));
 
   useLayoutEffect(() => {
     const restore = historyScrollRestoreRef.current;
@@ -1526,17 +1540,17 @@ export function ImageWorkbench() {
     goal,
     style,
     editBaseAssetId: editBaseImage?.assetId ?? null,
-    productAssetIds: productImages.map((image) => image.assetId ?? `local:${image.clientId}`),
+    productAssetIds: productImages.map((image) => `draft:${image.clientId}`),
     referenceAssetIds: referencePreviews.map((preview) =>
       preview.kind === "restored"
-        ? preview.assetId
-        : (preview.assetId ?? `local:${referenceImages[preview.index]!.clientId}`)
+        ? `restored:${preview.assetId}`
+        : `draft:${referenceImages[preview.index]!.clientId}`
     ),
     referencePrompt
   });
 
   useEffect(() => {
-    const record = promptOptimizationQuery.data;
+    const record = promptOptimizationQuery.data ?? promptOptimization?.record;
     if (
       record?.status === "succeeded" &&
       record.optimizedText &&
@@ -1545,20 +1559,19 @@ export function ImageWorkbench() {
       form.getValues("userText").trim() === record.originalText
     ) {
       form.setValue("userText", record.optimizedText, { shouldDirty: true });
+      setPromptOptimization((current) =>
+        current?.record.id === record.id ? { ...current, undoText: record.originalText } : current
+      );
     }
   }, [currentOptimizationContextSignature, form, promptOptimization, promptOptimizationQuery.data]);
-  const runPromptOptimization = async (input: {
-    operation: "optimize" | "alternative" | "revise";
-    revisionInstruction?: string;
-  }) => {
-    if (promptOptimizationPending) return;
+  const runPromptOptimization = async () => {
+    if (promptOptimizationPending || promptOptimization?.record.status === "processing") return;
     const formValues = form.getValues();
     const text = formValues.userText.trim();
     if (!text) {
       setUploadError("请输入文字后再优化提示词");
       return;
     }
-    if (input.operation !== "optimize" && !promptOptimization) return;
     const project = activeProjectQuery.data;
     if (!project) {
       setUploadError("当前创作项目尚未就绪，请稍后重试");
@@ -1566,7 +1579,6 @@ export function ImageWorkbench() {
     }
     setUploadError("");
     setPromptOptimizationPending(true);
-    setPromptOptimization((current) => (current ? { ...current, error: null } : null));
     try {
       const productAssetIds = await resolveImageAssetIds({
         images: productImages,
@@ -1589,8 +1601,11 @@ export function ImageWorkbench() {
         goal: formValues.goal,
         style: formValues.style,
         editBaseAssetId: editBaseImage?.assetId ?? null,
-        productAssetIds,
-        referenceAssetIds: [...restoredReferenceAssetIds, ...referenceAssetIds],
+        productAssetIds: productImages.map((image) => `draft:${image.clientId}`),
+        referenceAssetIds: [
+          ...restoredReferenceAssetIds.map((assetId) => `restored:${assetId}`),
+          ...referenceImages.map((image) => `draft:${image.clientId}`)
+        ],
         referencePrompt
       });
       const attachments = [
@@ -1608,15 +1623,17 @@ export function ImageWorkbench() {
           role: "product_source" as const,
           relation: `当前商品主体原图 ${index + 1}/${assetIds.length}`
         })),
-        ...[...restoredReferenceAssetIds, ...referenceAssetIds].map((assetId) => ({
+        ...referenceAssetIds.map((assetId) => ({
           assetId,
           role: "user_reference" as const,
-          relation: referencePrompt.trim() || "仅参考该图的场景、构图或视觉风格"
+          relation:
+            referencePrompt.trim() ||
+            "先理解参考图的优点、问题、版式和文字层级，再按当前商品重新设计；默认不复制参考商品、品牌或原文案，可规划非事实型创意文字"
         }))
       ];
       const record = await apiClient.createPromptOptimization(session.id, {
         idempotencyKey: crypto.randomUUID(),
-        operation: input.operation,
+        operation: "optimize",
         text: operationText,
         attachments,
         imageSettings: {
@@ -1627,37 +1644,26 @@ export function ImageWorkbench() {
         },
         modelId: formValues.modelId,
         agentInstruction,
-        parentOptimizationId: input.operation === "optimize" ? null : promptOptimization!.record.id,
-        revisionInstruction: input.operation === "revise" ? input.revisionInstruction! : null
+        parentOptimizationId: null,
+        revisionInstruction: null
       });
-      const previousState = promptOptimization;
-      const nextHistory = previousState
-        ? [
-            ...previousState.history,
-            {
-              text,
-              record: previousState.record,
-              contextSignature: previousState.contextSignature
-            }
-          ]
-        : [{ text, record: null, contextSignature: null }];
       setPromptOptimization({
         record,
         contextSignature,
-        history: nextHistory,
-        error: null
+        undoText: promptOptimization?.undoText ?? null
       });
+      if (
+        record.status === "succeeded" &&
+        record.optimizedText &&
+        form.getValues("userText").trim() === text &&
+        currentOptimizationContextSignature === contextSignature
+      ) {
+        form.setValue("userText", record.optimizedText, { shouldDirty: true });
+        setPromptOptimization({ record, contextSignature, undoText: text });
+      }
       if (record.status === "processing") setPromptOptimizationPending(false);
     } catch (error) {
-      setPromptOptimization((current) =>
-        current
-          ? {
-              ...current,
-              error: presentUserError(error).message
-            }
-          : null
-      );
-      if (!promptOptimization) setUploadError(presentUserError(error).message);
+      setUploadError(presentUserError(error).message);
     } finally {
       setPromptOptimizationPending(false);
     }
@@ -1763,11 +1769,10 @@ export function ImageWorkbench() {
                   unitFailures={activeGenerationTask?.unitFailures ?? []}
                   error={workflowError}
                   errorOccurredAt={
-                    activeGenerationTask?.updatedAt ??
-                    failedConversationMessage?.createdAt ??
-                    conversationSession?.updatedAt ??
-                    null
+                    activeGenerationTask?.updatedAt ?? conversationSession?.updatedAt ?? null
                   }
+                  conversationErrors={conversationTurnErrors}
+                  retryableTurnNumber={failedConversationMessage?.turnNumber ?? null}
                   onRetry={retryCurrentRun}
                   onCancel={() => {
                     if (activeGenerationTask) {
@@ -1841,36 +1846,17 @@ export function ImageWorkbench() {
                 removeProductImage(index);
                 setImageInputNotice("");
               }}
-              optimization={
-                promptOptimization
-                  ? {
-                      pending:
-                        promptOptimizationPending ||
-                        promptOptimization.record.status === "processing",
-                      error: promptOptimization.error
-                    }
-                  : null
+              optimizationPending={
+                promptOptimizationPending || promptOptimization?.record.status === "processing"
               }
-              optimizationPending={promptOptimizationPending}
-              onOptimize={() => void runPromptOptimization({ operation: "optimize" })}
+              canUndoOptimization={Boolean(promptOptimization?.undoText)}
+              onOptimize={() => void runPromptOptimization()}
               onUndoOptimization={() => {
-                const previous = promptOptimization?.history.at(-1);
-                if (!previous) return;
-                form.setValue("userText", previous.text, { shouldDirty: true });
-                const remaining = promptOptimization!.history.slice(0, -1);
-                setPromptOptimization(
-                  previous.record
-                    ? {
-                        record: previous.record,
-                        contextSignature:
-                          previous.contextSignature ?? currentOptimizationContextSignature,
-                        history: remaining,
-                        error: null
-                      }
-                    : null
-                );
+                const undoText = promptOptimization?.undoText;
+                if (!undoText) return;
+                form.setValue("userText", undoText, { shouldDirty: true });
+                setPromptOptimization(null);
               }}
-              onOptimizeAgain={() => void runPromptOptimization({ operation: "alternative" })}
             />
 
             <NormalModeReferencePanel
@@ -2032,6 +2018,8 @@ function ConversationThread({
   unitFailures,
   error,
   errorOccurredAt,
+  conversationErrors,
+  retryableTurnNumber,
   onRetry,
   onCancel,
   onReplaceImage,
@@ -2054,6 +2042,8 @@ function ConversationThread({
   unitFailures: NonNullable<ImageGenerationTask["unitFailures"]>;
   error: UserErrorPresentation | null;
   errorOccurredAt: string | null;
+  conversationErrors: Map<number, UserErrorPresentation>;
+  retryableTurnNumber: number | null;
   onRetry: () => void;
   onCancel: () => void;
   onReplaceImage: () => void;
@@ -2115,6 +2105,11 @@ function ConversationThread({
             ? index === rounds.length - 1
             : round.turnNumber === activeTurnNumber);
         const hasAssistantContent = round.assistant.length > 0 || containsActiveRun;
+        const conversationError = conversationErrors.get(round.turnNumber);
+        const failedUserMessage = round.user
+          .filter((message) => message.role === "user" && message.status === "failed")
+          .at(-1);
+        const hasErrorContent = Boolean(conversationError);
         return (
           <article className="conversation-round" key={round.turnNumber}>
             <div className="conversation-user-row">
@@ -2134,7 +2129,7 @@ function ConversationThread({
                 />
               ))}
             </div>
-            {hasAssistantContent && (
+            {(hasAssistantContent || hasErrorContent) && (
               <div className="conversation-agent-name">
                 <i>✦</i> {agentName}
               </div>
@@ -2157,6 +2152,16 @@ function ConversationThread({
                   />
                 ))}
               </div>
+            )}
+            {conversationError && (
+              <ErrorMessage
+                error={conversationError}
+                occurredAt={failedUserMessage?.createdAt ?? null}
+                allowAction={round.turnNumber === retryableTurnNumber}
+                onRetry={onRetry}
+                onReplaceImage={onReplaceImage}
+                onEditRequirement={onEditRequirement}
+              />
             )}
             {containsActiveRun && activeRunContent}
           </article>
@@ -3088,11 +3093,16 @@ function ImagePreviewDialog({
 
   useEffect(() => {
     if (!image) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("keydown", closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [image, onClose]);
 
   const constrainTransform = (transform: { scale: number; x: number; y: number }) => {
@@ -3221,7 +3231,7 @@ function ImagePreviewDialog({
   };
 
   if (!image) return null;
-  return (
+  return createPortal(
     <div className="image-preview-dialog" role="dialog" aria-modal="true" aria-label={image.alt}>
       <button
         className="image-preview-backdrop"
@@ -3271,19 +3281,22 @@ function ImagePreviewDialog({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
 function ErrorMessage({
   error,
   occurredAt,
+  allowAction = true,
   onRetry,
   onReplaceImage,
   onEditRequirement
 }: Readonly<{
   error: UserErrorPresentation;
   occurredAt: string | null;
+  allowAction?: boolean;
   onRetry: () => void;
   onReplaceImage: () => void;
   onEditRequirement: () => void;
@@ -3295,7 +3308,7 @@ function ErrorMessage({
       <div>
         <strong>{error.title}</strong>
         <p>{error.message}</p>
-        {error.action !== "contact_support" && (
+        {allowAction && error.action !== "contact_support" && (
           <Button type="button" variant="secondary" onClick={action}>
             {error.action === "replace_image" ? <ImagePlus /> : <RefreshCw />}
             {error.actionLabel}

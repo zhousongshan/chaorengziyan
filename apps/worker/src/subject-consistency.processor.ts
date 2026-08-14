@@ -194,11 +194,8 @@ export class SubjectConsistencyProcessor {
   private async enqueueRepair(generationTaskId: string, generationUnitId?: string): Promise<void> {
     if (!this.imageGenerationQueue) return;
     try {
-      if (generationUnitId && this.imageGenerationQueue.enqueueUnit) {
-        await this.imageGenerationQueue.enqueueUnit(generationTaskId, generationUnitId);
-      } else {
-        await this.imageGenerationQueue.enqueue(generationTaskId);
-      }
+      if (!generationUnitId) throw new Error("主体修复任务缺少冻结执行单元");
+      await this.imageGenerationQueue.enqueueUnit(generationTaskId, generationUnitId);
       await this.tasks.markRepairEnqueued(generationTaskId, generationUnitId);
     } catch {
       // The transactional outbox keeps the repair generation pending.
@@ -226,16 +223,9 @@ export class SubjectConsistencyProcessor {
       return;
     }
 
-    const watermark = task.watermarkAsset
-      ? {
-          content: await streamToBuffer(await this.storage.read(task.watermarkAsset.storageKey)),
-          mimeType: task.watermarkAsset.mimeType
-        }
-      : null;
     const rendered = await renderDeliveryImage({
       source: candidate,
-      settings: task.deliverySettings,
-      watermark
+      settings: task.deliverySettings
     });
     if (
       rendered.content.length === 0 ||
@@ -394,26 +384,73 @@ async function assertInspectionImage(
 
 export function classifySubjectConsistencyFailure(error: unknown): SubjectConsistencyFailure {
   if (error instanceof SubjectConsistencyTaskDataError) {
-    return { code: error.code, message: error.message, retryable: false };
+    return {
+      code: error.code,
+      message: userSafeSubjectMessage(error.code),
+      retryable: false
+    };
   }
   if (error instanceof SubjectConsistencyConfigurationError) {
     return {
       code: "SUBJECT_INSPECTION_NOT_CONFIGURED",
-      message: error.message,
+      message: userSafeSubjectMessage("SUBJECT_INSPECTION_NOT_CONFIGURED"),
       retryable: false
     };
   }
   if (error instanceof SubjectConsistencyProviderError) {
-    return { code: error.code, message: error.message, retryable: error.retryable };
+    return {
+      code: error.code,
+      message: userSafeSubjectMessage(error.code),
+      retryable: error.retryable
+    };
   }
   if (error instanceof ImageDeliveryRenderError) {
-    return { code: "DELIVERY_IMAGE_PROCESSING_FAILED", message: error.message, retryable: true };
+    return {
+      code: "DELIVERY_IMAGE_PROCESSING_FAILED",
+      message: userSafeSubjectMessage("DELIVERY_IMAGE_PROCESSING_FAILED"),
+      retryable: true
+    };
   }
   return {
     code: "SUBJECT_CONSISTENCY_CHECK_FAILED",
-    message: error instanceof Error ? error.message : "主体一致性检查失败",
+    message: userSafeSubjectMessage("SUBJECT_CONSISTENCY_CHECK_FAILED"),
     retryable: true
   };
+}
+
+function userSafeSubjectMessage(code: string): string {
+  switch (code) {
+    case "SUBJECT_REPAIR_QUEUE_NOT_CONFIGURED":
+      return "主体修复服务尚未配置，请联系管理员";
+    case "SUBJECT_REPAIR_GENERATION_FAILED":
+      return "商品主体自动修复生成失败，请重新尝试";
+    case "SUBJECT_CHECK_REQUIREMENT_NOT_AVAILABLE":
+    case "SUBJECT_CHECK_IMAGE_NOT_AVAILABLE":
+    case "QUALITY_SOURCE_IMAGE_NOT_AVAILABLE":
+      return "主体检查所需的商品原图或需求已不可用，请重新选择图片后生成";
+    case "SUBJECT_INSPECTION_NOT_CONFIGURED":
+      return "图片检查服务尚未完成配置，请联系管理员";
+    case "SUBJECT_AI_TIMEOUT":
+      return "图片检查等待时间过长，请重新生成";
+    case "SUBJECT_AI_RATE_LIMITED":
+      return "当前图片检查请求较多，请稍后重试";
+    case "SUBJECT_AI_SERVICE_UNAVAILABLE":
+    case "SUBJECT_AI_REQUEST_FAILED":
+      return "图片检查服务暂时不可用，请稍后重试";
+    case "INVALID_SUBJECT_AI_RESPONSE":
+    case "INVALID_SUBJECT_AI_JSON":
+    case "EMPTY_SUBJECT_AI_RESPONSE":
+      return "图片检查服务返回了无效结果，请重新生成";
+    case "SOURCE_IMAGE_NOT_AVAILABLE":
+      return "商品原图已不可用，请重新选择图片后生成";
+    case "SUBJECT_CONSISTENCY_EXECUTION_FAILED":
+    case "SUBJECT_CONSISTENCY_CHECK_FAILED":
+      return "图片检查未能完成，请稍后重新生成";
+    case "DELIVERY_IMAGE_PROCESSING_FAILED":
+      return "图片已通过检查，但最终格式或交付处理失败，请重新尝试";
+    default:
+      return "图片检查未能完成，请稍后重新生成";
+  }
 }
 
 function monitorSubjectCancellation(check: () => Promise<boolean>): {

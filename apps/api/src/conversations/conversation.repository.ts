@@ -180,6 +180,7 @@ export interface ConversationRepository {
   findDispatchableTurnMessageIds(input: {
     now: string;
     maxAttempts: number;
+    maxEnqueueAttempts?: number;
     limit: number;
   }): Promise<string[]>;
   recordTurnEnqueueAttempt(messageId: string, errorMessage?: string): Promise<void>;

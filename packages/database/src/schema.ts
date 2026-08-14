@@ -336,12 +336,20 @@ export const requirementAiAttempts = pgTable(
       .notNull()
       .references(() => conversationMessages.id, { onDelete: "cascade" }),
     attemptNumber: integer("attempt_number").notNull(),
+    phase: text("phase").notNull(),
+    phaseAttemptNumber: integer("phase_attempt_number").notNull(),
     status: text("status").notNull(),
-    rawOutput: jsonb("raw_output").notNull(),
+    rawOutput: jsonb("raw_output"),
     validationIssues: jsonb("validation_issues").notNull().default([]),
     aiModel: text("ai_model").notNull(),
     promptVersion: text("prompt_version").notNull(),
     contractVersion: text("contract_version").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    durationMs: integer("duration_ms"),
+    errorCode: text("error_code"),
+    errorPhase: text("error_phase"),
+    errorDetails: jsonb("error_details"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
   },
   (table) => [
@@ -625,6 +633,7 @@ export const workflowEvents = pgTable(
     payload: jsonb("payload").notNull().default({}),
     availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
     publishedAt: timestamp("published_at", { withTimezone: true }),
+    terminalAt: timestamp("terminal_at", { withTimezone: true }),
     publishAttempts: integer("publish_attempts").notNull().default(0),
     lastError: text("last_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
@@ -690,6 +699,7 @@ export const generationTaskUnits = pgTable(
     variantPosition: integer("variant_position").notNull(),
     outputLayout: text("output_layout").notNull(),
     instruction: text("instruction"),
+    requirementSnapshot: jsonb("requirement_snapshot"),
     status: taskStatus("status").notNull().default("queued"),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),

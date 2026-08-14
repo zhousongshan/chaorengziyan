@@ -42,9 +42,13 @@ export class ConversationStateReducer {
     const referenceAttachments = input.request.attachments.filter(
       (attachment) => attachment.role === "user_reference"
     );
+    const localEditWithoutReference =
+      Boolean(editBaseAttachment) && referenceAttachments.length === 0;
     const referenceGuidance = referenceAttachments.map((attachment) => ({
       assetId: attachment.assetId,
-      instruction: attachment.relation ?? "仅参考该图的场景、构图或视觉风格，不作为商品主体事实"
+      instruction:
+        attachment.relation ??
+        "先理解参考图的优点、问题、版式和文字层级，再按当前商品重新设计；默认不复制参考商品、品牌或原文案，可规划非事实型创意文字"
     }));
 
     const stateBase: ConversationState = {
@@ -71,7 +75,11 @@ export class ConversationStateReducer {
       agentInstruction: input.request.agentInstruction ?? input.previous.agentInstruction,
       renderSettings: input.request.renderSettings ?? input.previous.renderSettings,
       deliverySettings: input.request.deliverySettings ?? input.previous.deliverySettings,
-      currentGenerationPlan: input.generationPlan ?? input.previous.currentGenerationPlan
+      currentGenerationPlan:
+        input.generationPlan ??
+        (productAttachments.length > 0 || localEditWithoutReference
+          ? null
+          : input.previous.currentGenerationPlan)
     };
 
     if (input.output.action === "respond_only") {
@@ -96,7 +104,8 @@ export class ConversationStateReducer {
       throw new Error(`${input.output.action} 缺少可用需求结果`);
     }
     const candidate = input.output.result.finalRequirement;
-    const current = input.previous.currentRequirement;
+    const replacesProductRequirement = shouldReplaceProductRequirement(input);
+    const current = replacesProductRequirement ? null : input.previous.currentRequirement;
     const changedFields = new Set(input.output.changedFields);
     const merged = current ? { ...current } : { ...candidate };
     const appliedFields = current
@@ -105,10 +114,17 @@ export class ConversationStateReducer {
     for (const field of appliedFields) {
       Object.assign(merged, { [field]: candidate[field] });
     }
-    const finalRequirement = finalRequirementSchema.parse(merged);
-    const fieldSources = { ...input.previous.fieldSources };
+    const requestedAspectRatio = input.request.imageSettings?.aspectRatio;
+    const finalRequirement = finalRequirementSchema.parse({
+      ...merged,
+      ...(requestedAspectRatio ? { aspectRatio: requestedAspectRatio } : {})
+    });
+    const fieldSources = replacesProductRequirement ? {} : { ...input.previous.fieldSources };
     for (const field of appliedFields) {
       fieldSources[field] = { messageId: input.messageId, turnNumber: input.turnNumber };
+    }
+    if (requestedAspectRatio) {
+      fieldSources.aspectRatio = { messageId: input.messageId, turnNumber: input.turnNumber };
     }
     const state = conversationStateSchema.parse({
       ...stateBase,
@@ -121,4 +137,16 @@ export class ConversationStateReducer {
       result: { ...input.output.result, finalRequirement }
     };
   }
+}
+
+function shouldReplaceProductRequirement(input: {
+  request: CreateConversationMessageRequest;
+}): boolean {
+  const hasCurrentProduct = input.request.attachments.some(
+    (attachment) => attachment.role === "product_source"
+  );
+  const editsExistingImage = input.request.attachments.some(
+    (attachment) => attachment.role === "edit_base"
+  );
+  return hasCurrentProduct && !editsExistingImage;
 }

@@ -36,6 +36,25 @@ const sourceAssetId = "00000000-0000-4000-8000-000000000042";
 const regenerationIdempotencyKey = "00000000-0000-4000-8000-000000000043";
 const productEntityId = "00000000-0000-4000-8000-000000000044";
 
+const referenceAnalysis = {
+  assetId: referenceImageId,
+  observedDesign: {
+    sellingPointPresentation: "左侧卖点模块配合商品展示",
+    composition: "信息左置、商品右置",
+    informationHierarchy: "品牌、标题和辅助卖点分三级",
+    typography: "粗体标题搭配圆角标签",
+    colorAndLighting: "绿色主色与柔和棚拍光",
+    spacingAndRhythm: "左右分区并保留充足边距",
+    propsAndScene: "桌面道具形成前后层次"
+  },
+  transferPlan: {
+    adopt: ["采用左右分栏和三级信息层级"],
+    adapt: ["把参考商品特写改为当前商品可见细节"],
+    avoid: ["不复制参考商品、品牌和原文案"],
+    userPriority: []
+  }
+};
+
 const environment = environmentSchema.parse({
   NODE_ENV: "test",
   DATABASE_URL: "postgresql://test:test@127.0.0.1:5432/test",
@@ -82,16 +101,9 @@ const readyResult: RequirementResult = {
 };
 
 class FakeQueue implements ImageGenerationQueue {
-  public readonly taskIds: string[] = [];
   public readonly unitJobs: Array<{ taskId: string; unitId: string }> = [];
   public shouldFail = false;
   public readonly cancellations: Array<{ taskId: string; unitIds: string[] }> = [];
-
-  public enqueue(taskId: string): Promise<void> {
-    if (this.shouldFail) return Promise.reject(new Error("queue unavailable"));
-    this.taskIds.push(taskId);
-    return Promise.resolve();
-  }
 
   public enqueueUnit(taskId: string, unitId: string): Promise<void> {
     if (this.shouldFail) return Promise.reject(new Error("queue unavailable"));
@@ -140,7 +152,7 @@ async function createSubject(options?: {
     stateSnapshotId,
     request: options?.request ?? request,
     result: options?.result ?? readyResult,
-    executionPlan: options?.executionPlan,
+    executionPlan: options?.executionPlan ?? currentExecutionPlan(),
     aiModel: "test",
     promptVersion: "test",
     createdAt: new Date().toISOString()
@@ -162,6 +174,46 @@ async function createSubject(options?: {
     mediaAssets
   );
   return { service, queue, tasks, requirementRuns, assetRepository };
+}
+
+function currentExecutionPlan(outputCount = 1): ResolvedGenerationPlan {
+  return {
+    schemaVersion: "3.0",
+    summary: "商品图结合参考海报生成",
+    groups: [
+      {
+        sourceImages: [
+          {
+            assetId: productImageId,
+            sourceRole: "product_source",
+            usage: "subject_fact",
+            position: 0
+          },
+          {
+            assetId: referenceImageId,
+            sourceRole: "user_reference",
+            usage: "style_reference",
+            position: 1
+          }
+        ],
+        subjectEntities: [
+          {
+            entityKey: "product",
+            label: "商品",
+            productEntityId,
+            lineageKind: "new_product_source",
+            inheritedFromAssetId: null,
+            sourceAssetIds: [productImageId]
+          }
+        ],
+        subjectPolicy: { defaultAction: "preserve", allowedChanges: [] },
+        referenceAnalyses: [referenceAnalysis],
+        outputCount,
+        outputLayout: "separate_image",
+        instruction: "保持当前商品事实，迁移参考海报的左右分栏和信息层级"
+      }
+    ]
+  };
 }
 
 describe("ImageGenerationService", () => {
@@ -188,17 +240,13 @@ describe("ImageGenerationService", () => {
     const created = await service.create({ requirementRunId, idempotencyKey });
 
     expect(created.status).toBe("queued");
-    expect(queue.taskIds).toEqual([]);
     expect(queue.unitJobs).toEqual([
       { taskId: created.taskId, unitId: expect.any(String) as string }
     ]);
     await expect(tasks.findById(created.taskId)).resolves.toMatchObject({
       idempotencyKey,
-      instruction: expect.stringContaining("生成一张干净的电商主图"),
-      instructionVersion: "image-instruction-v3"
-    });
-    await expect(tasks.findById(created.taskId)).resolves.toMatchObject({
-      instruction: expect.stringContaining("生成目标：商品主图")
+      instruction: "本任务只允许按已冻结的执行单元指令执行。",
+      instructionVersion: "image-instruction-v6"
     });
     await expect(tasks.findById(created.taskId)).resolves.toMatchObject({
       units: [
@@ -348,7 +396,7 @@ describe("ImageGenerationService", () => {
     await expect(service.create({ requirementRunId, idempotencyKey })).rejects.toMatchObject({
       status: 400
     });
-    expect(queue.taskIds).toEqual([]);
+    expect(queue.unitJobs).toEqual([]);
   });
 
   it("returns the same task without enqueueing twice for one idempotency key", async () => {
@@ -396,11 +444,13 @@ describe("ImageGenerationService", () => {
       }
     });
     expect(childRun?.executionPlan).toEqual({
-      schemaVersion: "2.0",
+      schemaVersion: "3.0",
       summary: `再次生成来源执行单元 ${sourceUnitId}`,
       groups: [
         {
           sourceImages: sourceUnit.sources,
+          subjectPolicy: { defaultAction: "preserve", allowedChanges: [] },
+          referenceAnalyses: [referenceAnalysis],
           subjectEntities: sourceUnit.subjectEntities.map((entity) => ({
             ...entity,
             lineageKind: "inherited_product_entity",
@@ -598,10 +648,12 @@ describe("ImageGenerationService", () => {
       finalRequirement: { ...readyResult.finalRequirement, imageCount: 2 }
     };
     const executionPlan: ResolvedGenerationPlan = {
-      schemaVersion: "1.0",
+      schemaVersion: "3.0",
       summary: "两个独立方案",
       groups: [
         {
+          subjectPolicy: { defaultAction: "preserve", allowedChanges: [] },
+          referenceAnalyses: [],
           sourceImages: [
             {
               assetId: productImageId,
@@ -623,6 +675,28 @@ describe("ImageGenerationService", () => {
     expect(queue.unitJobs).toHaveLength(2);
     expect(new Set(queue.unitJobs.map((job) => job.unitId)).size).toBe(2);
     expect(queue.unitJobs.every((job) => job.taskId === created.taskId)).toBe(true);
+  });
+
+  it("uses only the group subject policy in each frozen execution unit", async () => {
+    const staleInstruction = "把包装改成小猪花卉马赛克";
+    const result: RequirementResult = {
+      ...readyResult,
+      finalRequirement: {
+        ...readyResult.finalRequirement,
+        subjectPolicy: {
+          defaultAction: "preserve",
+          allowedChanges: [{ feature: "pattern", instruction: staleInstruction }]
+        }
+      }
+    };
+    const { service, tasks } = await createSubject({ result });
+
+    const created = await service.create({ requirementRunId, idempotencyKey });
+    const task = await tasks.findById(created.taskId);
+
+    expect(task?.units[0]?.requirementSnapshot?.subjectPolicy.allowedChanges).toEqual([]);
+    expect(task?.units[0]?.instruction).not.toContain(staleInstruction);
+    expect(task?.units[0]?.instruction).toContain("用户没有授权修改任何商品主体特征");
   });
 });
 
@@ -655,7 +729,7 @@ async function createRegenerationSubject(options?: {
   const sourceUnit: NonNullable<ImageGenerationTaskRecord["units"]>[number] = {
     unitId: sourceUnitId,
     position: 2,
-    groupPosition: 1,
+    groupPosition: 0,
     variantPosition: 0,
     outputLayout: "separate_image",
     instruction: "保持商品主体，生成新的桌面陈列构图",
@@ -739,7 +813,19 @@ function activeTaskRecord(): ImageGenerationTaskRecord {
     error: null,
     createdAt: now,
     updatedAt: now,
-    units: []
+    units: [
+      {
+        unitId: "00000000-0000-4000-8000-000000000053",
+        position: 0,
+        groupPosition: 0,
+        variantPosition: 0,
+        outputLayout: "separate_image",
+        instruction: "另一个任务的冻结执行单元",
+        qualitySourceAssetIds: [],
+        subjectEntities: [],
+        sources: []
+      }
+    ]
   };
 }
 

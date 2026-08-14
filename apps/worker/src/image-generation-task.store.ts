@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, inArray, isNull, max, notExists } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import {
   conversationMessageAssets,
@@ -21,6 +21,7 @@ import {
   type DatabaseConnection
 } from "@chaoren/database";
 import {
+  finalRequirementSchema,
   requirementResultSchema,
   resolveRequirementRequestSchema,
   type FinalRequirement,
@@ -29,7 +30,7 @@ import {
   type ImageGenerationStatus
 } from "@chaoren/contracts";
 import type { SourceImageRole } from "@chaoren/image-generation";
-import { buildImageGenerationInstruction } from "@chaoren/image-generation";
+import { buildBrandLogoInstruction } from "@chaoren/image-generation";
 
 import { CreationRunCoordinator } from "./creation-run.coordinator.js";
 
@@ -45,6 +46,7 @@ export interface WorkerExecutableUnit {
   position: number;
   status?: ImageGenerationStatus;
   instruction: string;
+  requirement?: FinalRequirement;
   outputLayout: string;
   sourceAssets: WorkerSourceAsset[];
   qualitySourceAssetIds?: string[];
@@ -101,12 +103,6 @@ export interface WorkerOutputAsset {
   sourceProductAssetIds?: string[];
 }
 
-export interface WorkerFailedUnit {
-  unitId: string;
-  position: number;
-  error: ImageGenerationError;
-}
-
 export interface WorkerFailedUnitAttempt {
   providerRequestId?: string;
   failureStage?: "submission" | "polling" | "download" | "validation";
@@ -120,21 +116,6 @@ export interface WorkerAttemptFailure extends ImageGenerationError {
 
 export interface ImageGenerationTaskStore {
   load(taskId: string): Promise<WorkerGenerationTask | undefined>;
-  markRunning(taskId: string): Promise<boolean>;
-  markSucceeded(
-    taskId: string,
-    outputs: WorkerOutputAsset[],
-    consistency?: {
-      requirementRunId: string;
-      sourceProductAssetIds: string[];
-      inspectionModel: string;
-      requirementModel: string;
-      workflowVersion: string;
-    },
-    failedUnits?: WorkerFailedUnit[]
-  ): Promise<string[]>;
-  markFailed(taskId: string, error: ImageGenerationError): Promise<void>;
-  findRecoverableIds(): Promise<string[]>;
   loadUnit(
     taskId: string,
     unitId: string
@@ -178,6 +159,7 @@ export interface ImageGenerationTaskStore {
     }
   ): Promise<string[]>;
   markUnitFailed(unitId: string, error: ImageGenerationError): Promise<void>;
+  markQueueDeliveryFailed(unitId: string): Promise<void>;
   findRecoverableUnits(): Promise<Array<{ taskId: string; unitId: string }>>;
 }
 
@@ -333,7 +315,7 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
         );
       }
     }
-    const sourceAssets = orderedSources.map(({ id, role }) => {
+    const sourceAssets: WorkerSourceAsset[] = orderedSources.map(({ id, role }) => {
       const asset = rowsById.get(id);
       if (
         !asset ||
@@ -348,13 +330,48 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
       }
       return { id: asset.id, storageKey: asset.storageKey, mimeType: asset.mimeType, role };
     });
-    const units = unitRows.map((unit) => ({
-      id: unit.id,
-      position: unit.position,
-      status: unit.status,
-      instruction: unit.instruction ?? task.instruction,
-      outputLayout: unit.outputLayout,
-      sourceAssets: unitSourceRows
+    const watermark = watermarkAssetId ? rowsById.get(watermarkAssetId) : undefined;
+    if (
+      request.data.deliverySettings.watermark.enabled &&
+      (!watermark ||
+        watermark.userId !== task.userId ||
+        watermark.projectId !== task.projectId ||
+        watermark.kind !== "image")
+    ) {
+      throw new WorkerTaskDataError(
+        "WATERMARK_IMAGE_NOT_AVAILABLE",
+        "水印 Logo 不存在，或不属于当前任务"
+      );
+    }
+    const brandLogoSource =
+      request.data.deliverySettings.watermark.enabled && watermark
+        ? {
+            id: watermark.id,
+            storageKey: watermark.storageKey,
+            mimeType: watermark.mimeType,
+            role: "brand_logo" as const
+          }
+        : null;
+    if (brandLogoSource) sourceAssets.push(brandLogoSource);
+    const readyRequirement = result.data.status === "ready" ? result.data.finalRequirement : null;
+    if (!readyRequirement) {
+      throw new WorkerTaskDataError(
+        "REQUIREMENT_RUN_NOT_AVAILABLE",
+        "生图任务对应的需求记录不可用"
+      );
+    }
+    const units = unitRows.map((unit) => {
+      const frozenInstruction = unit.instruction?.trim();
+      if (!frozenInstruction) {
+        throw new WorkerTaskDataError(
+          "GENERATION_EXECUTION_PLAN_UNAVAILABLE",
+          "生图单元缺少冻结执行指令，不能沿用旧请求重新生成"
+        );
+      }
+      const unitRequirement = unit.requirementSnapshot
+        ? finalRequirementSchema.parse(unit.requirementSnapshot)
+        : { ...readyRequirement, imageCount: 1 };
+      const unitSourceAssets = unitSourceRows
         .filter((source) => source.unitId === unit.id)
         .map((source) => {
           const asset = rowsById.get(source.assetId);
@@ -375,24 +392,30 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
             mimeType: asset.mimeType,
             role: toProviderSourceRole(source.sourceRole, source.usage)
           };
-        }),
-      qualitySourceAssetIds: unitQualitySourceRows
-        .filter((source) => source.unitId === unit.id)
-        .map((source) => source.assetId)
-    }));
-    const watermark = watermarkAssetId ? rowsById.get(watermarkAssetId) : undefined;
-    if (
-      request.data.deliverySettings.watermark.enabled &&
-      (!watermark ||
-        watermark.userId !== task.userId ||
-        watermark.projectId !== task.projectId ||
-        watermark.kind !== "image")
-    ) {
-      throw new WorkerTaskDataError(
-        "WATERMARK_IMAGE_NOT_AVAILABLE",
-        "水印 Logo 不存在，或不属于当前任务"
-      );
-    }
+        });
+      const hasStoredBrandLogo = unitSourceAssets.some((source) => source.role === "brand_logo");
+      if (brandLogoSource && !hasStoredBrandLogo) {
+        unitSourceAssets.push(brandLogoSource);
+      }
+      return {
+        id: unit.id,
+        position: unit.position,
+        status: unit.status,
+        instruction:
+          brandLogoSource && !hasStoredBrandLogo
+            ? `${frozenInstruction}\n${buildBrandLogoInstruction(
+                unitSourceAssets.length,
+                request.data.deliverySettings.watermark.position
+              )}`
+            : frozenInstruction,
+        requirement: unitRequirement,
+        outputLayout: unit.outputLayout,
+        sourceAssets: unitSourceAssets,
+        qualitySourceAssetIds: unitQualitySourceRows
+          .filter((source) => source.unitId === unit.id)
+          .map((source) => source.assetId)
+      };
+    });
 
     return {
       id: task.id,
@@ -409,34 +432,10 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
       watermarkAsset: watermark
         ? { id: watermark.id, storageKey: watermark.storageKey, mimeType: watermark.mimeType }
         : null,
-      instruction:
-        task.instruction ||
-        buildImageGenerationInstruction(
-          result.data.finalRequirement,
-          {
-            editBase: request.data.editBaseImageId ? 1 : 0,
-            product: request.data.productImageIds.length,
-            reference: request.data.referenceImageIds.length
-          },
-          {
-            generationGoal: request.data.imageSettings.generationGoal,
-            referenceGuidance: request.data.referenceGuidance
-          }
-        ),
+      instruction: task.instruction,
       sourceAssets,
       units
     };
-  }
-
-  public async markRunning(taskId: string): Promise<boolean> {
-    const updated = await this.connection.db
-      .update(generationTasks)
-      .set({ status: "running", errorCode: null, errorMessage: null, updatedAt: new Date() })
-      .where(and(eq(generationTasks.id, taskId), eq(generationTasks.status, "queued")))
-      .returning({ id: generationTasks.id });
-    const running = updated.length === 1;
-    if (running) await this.runCoordinator.markRunningByTaskId(taskId);
-    return running;
   }
 
   public async loadUnit(
@@ -891,6 +890,13 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
     await this.runCoordinator.finalizeByTaskId(updated.taskId);
   }
 
+  public async markQueueDeliveryFailed(unitId: string): Promise<void> {
+    await this.markUnitFailed(unitId, {
+      code: "IMAGE_GENERATION_QUEUE_UNAVAILABLE",
+      message: "生图任务队列投递失败，已达到自动恢复上限"
+    });
+  }
+
   public async findRecoverableUnits(): Promise<Array<{ taskId: string; unitId: string }>> {
     return this.connection.db
       .select({ taskId: generationTaskUnits.taskId, unitId: generationTaskUnits.id })
@@ -902,337 +908,6 @@ export class DrizzleImageGenerationTaskStore implements ImageGenerationTaskStore
           inArray(generationTaskUnits.status, ["queued", "running"])
         )
       );
-  }
-
-  public async markSucceeded(
-    taskId: string,
-    outputs: WorkerOutputAsset[],
-    consistency?: {
-      requirementRunId: string;
-      sourceProductAssetIds: string[];
-      inspectionModel: string;
-      requirementModel: string;
-      workflowVersion: string;
-    },
-    failedUnits: WorkerFailedUnit[] = []
-  ): Promise<string[]> {
-    const consistencyOutputs = consistency
-      ? outputs.filter(
-          (output) => (output.sourceProductAssetIds ?? consistency.sourceProductAssetIds).length > 0
-        )
-      : [];
-    const checkIds = consistencyOutputs.map(() => randomUUID());
-    let queuedCheckIds: string[] = [];
-    await this.connection.db.transaction(async (transaction) => {
-      const [repair] = await transaction
-        .select({
-          checkId: subjectConsistencyRepairs.checkId,
-          originalGeneratedAssetId: subjectConsistencyChecks.generatedAssetId
-        })
-        .from(subjectConsistencyRepairs)
-        .innerJoin(
-          subjectConsistencyChecks,
-          eq(subjectConsistencyRepairs.checkId, subjectConsistencyChecks.id)
-        )
-        .where(eq(subjectConsistencyRepairs.generationTaskId, taskId))
-        .limit(1);
-      if (repair && outputs.length !== 1) {
-        throw new WorkerTaskDataError(
-          "INVALID_SUBJECT_REPAIR_OUTPUT_COUNT",
-          "主体修复生图必须只返回一张图片"
-        );
-      }
-      const taskSucceeded = outputs.length > 0;
-      const updated = await transaction
-        .update(generationTasks)
-        .set({
-          status: taskSucceeded ? "succeeded" : "failed",
-          errorCode: taskSucceeded
-            ? null
-            : (failedUnits[0]?.error.code ?? "IMAGE_GENERATION_FAILED"),
-          errorMessage: taskSucceeded
-            ? null
-            : (failedUnits[0]?.error.message ?? "所有图片生成均失败"),
-          updatedAt: new Date()
-        })
-        .where(and(eq(generationTasks.id, taskId), eq(generationTasks.status, "running")))
-        .returning({
-          id: generationTasks.id,
-          creationRunId: generationTasks.creationRunId,
-          sessionId: generationTasks.sessionId,
-          requirementRunId: generationTasks.requirementRunId
-        });
-      if (updated.length !== 1) {
-        throw new WorkerTaskDataError(
-          "INVALID_IMAGE_GENERATION_TASK_TRANSITION",
-          "生图任务状态不允许标记成功"
-        );
-      }
-
-      for (const output of outputs) {
-        if (output.unitId) {
-          await transaction
-            .update(generationTaskUnits)
-            .set({
-              status: "succeeded",
-              errorCode: null,
-              errorMessage: null,
-              updatedAt: new Date()
-            })
-            .where(eq(generationTaskUnits.id, output.unitId));
-        }
-      }
-      for (const failure of failedUnits) {
-        await transaction
-          .update(generationTaskUnits)
-          .set({
-            status: "failed",
-            errorCode: failure.error.code,
-            errorMessage: failure.error.message,
-            updatedAt: new Date()
-          })
-          .where(eq(generationTaskUnits.id, failure.unitId));
-      }
-      if (outputs.length === 0) return;
-      await transaction.insert(mediaAssets).values(
-        outputs.map((output) => ({
-          id: output.id,
-          userId: output.userId,
-          projectId: output.projectId,
-          kind: "image" as const,
-          origin: "generated" as const,
-          contentSha256: null,
-          storageKey: output.storageKey,
-          mimeType: output.mimeType,
-          byteSize: output.byteSize,
-          originalFileName: output.originalFileName,
-          createdAt: output.createdAt
-        }))
-      );
-      await transaction.insert(generationTaskOutputs).values(
-        outputs.map((output, position) => ({
-          taskId,
-          assetId: output.id,
-          unitId: output.unitId ?? null,
-          position: output.unitPosition ?? position,
-          status:
-            repair || consistencyOutputs.some((candidate) => candidate.id === output.id)
-              ? ("candidate" as const)
-              : ("deliverable" as const),
-          deliverableAssetId:
-            repair || consistencyOutputs.some((candidate) => candidate.id === output.id)
-              ? null
-              : output.id,
-          updatedAt: output.createdAt
-        }))
-      );
-      const completedTask = updated[0];
-      if (completedTask?.sessionId) {
-        const [run] = await transaction
-          .select({ sourceMessageId: requirementRuns.sourceMessageId })
-          .from(requirementRuns)
-          .where(eq(requirementRuns.id, completedTask.requirementRunId))
-          .limit(1);
-        if (run?.sourceMessageId) {
-          const [sourceMessage] = await transaction
-            .select({ turnNumber: conversationMessages.turnNumber })
-            .from(conversationMessages)
-            .where(eq(conversationMessages.id, run.sourceMessageId))
-            .limit(1);
-          if (sourceMessage) {
-            const [assistantMessage] = await transaction
-              .select({ id: conversationMessages.id })
-              .from(conversationMessages)
-              .where(
-                and(
-                  eq(conversationMessages.sessionId, completedTask.sessionId),
-                  eq(conversationMessages.turnNumber, sourceMessage.turnNumber),
-                  eq(conversationMessages.role, "assistant")
-                )
-              )
-              .limit(1);
-            if (assistantMessage && !repair) {
-              const deliverableOutputs = outputs.filter(
-                (output) => !consistencyOutputs.some((candidate) => candidate.id === output.id)
-              );
-              if (deliverableOutputs.length > 0) {
-                const [lastPosition] = await transaction
-                  .select({ value: max(conversationMessageAssets.position) })
-                  .from(conversationMessageAssets)
-                  .where(eq(conversationMessageAssets.messageId, assistantMessage.id));
-                const positionOffset = (lastPosition?.value ?? -1) + 1;
-                await transaction.insert(conversationMessageAssets).values(
-                  deliverableOutputs.map((output, position) => ({
-                    messageId: assistantMessage.id,
-                    assetId: output.id,
-                    role: "generated_result" as const,
-                    position: positionOffset + (output.unitPosition ?? position),
-                    relation: `generation-task:${taskId}`,
-                    createdAt: output.createdAt
-                  }))
-                );
-              }
-            }
-          }
-        }
-      }
-      if (repair) {
-        await transaction
-          .update(generationTaskOutputs)
-          .set({
-            status: "superseded",
-            supersededByAssetId: outputs[0]!.id,
-            rejectionCode: null,
-            updatedAt: outputs[0]!.createdAt
-          })
-          .where(eq(generationTaskOutputs.assetId, repair.originalGeneratedAssetId));
-        await transaction
-          .update(subjectConsistencyRepairs)
-          .set({ generatedAssetId: outputs[0]!.id, updatedAt: outputs[0]!.createdAt })
-          .where(eq(subjectConsistencyRepairs.generationTaskId, taskId));
-        await transaction
-          .update(subjectConsistencyChecks)
-          .set({
-            status: "queued",
-            phase: "final_inspection",
-            userMessage: "修复图片已生成，正在进行第二次主体质检",
-            errorCode: null,
-            errorMessage: null,
-            updatedAt: outputs[0]!.createdAt
-          })
-          .where(eq(subjectConsistencyChecks.id, repair.checkId));
-        queuedCheckIds = [repair.checkId];
-      } else if (consistency && consistencyOutputs.length > 0) {
-        await transaction.insert(subjectConsistencyChecks).values(
-          consistencyOutputs.map((output, index) => ({
-            id: checkIds[index]!,
-            userId: output.userId,
-            projectId: output.projectId,
-            generationTaskId: taskId,
-            generationUnitId: output.unitId ?? null,
-            requirementRunId: consistency.requirementRunId,
-            generatedAssetId: output.id,
-            status: "queued" as const,
-            phase: "initial_inspection" as const,
-            inspectionModel: consistency.inspectionModel,
-            requirementModel: consistency.requirementModel,
-            workflowVersion: consistency.workflowVersion,
-            createdAt: output.createdAt,
-            updatedAt: output.createdAt
-          }))
-        );
-        await transaction.insert(subjectConsistencyCheckSources).values(
-          checkIds.flatMap((checkId, outputIndex) =>
-            (
-              consistencyOutputs[outputIndex]?.sourceProductAssetIds ??
-              consistency.sourceProductAssetIds
-            ).map((assetId, position) => ({
-              checkId,
-              assetId,
-              position
-            }))
-          )
-        );
-        queuedCheckIds = checkIds;
-      }
-      if (queuedCheckIds.length > 0) {
-        const runId = updated[0]!.creationRunId;
-        await transaction
-          .select({ id: creationRuns.id })
-          .from(creationRuns)
-          .where(eq(creationRuns.id, runId))
-          .limit(1)
-          .for("update");
-        const [lastEvent] = await transaction
-          .select({ sequence: workflowEvents.sequence })
-          .from(workflowEvents)
-          .where(eq(workflowEvents.runId, runId))
-          .orderBy(desc(workflowEvents.sequence))
-          .limit(1);
-        await transaction.insert(workflowEvents).values(
-          queuedCheckIds.map((queuedCheckId, index) => ({
-            runId,
-            sequence: (lastEvent?.sequence ?? 0) + index + 1,
-            eventType: "subject.check.enqueue",
-            entityType: "subject_consistency_check",
-            entityId: queuedCheckId,
-            payload: { checkId: queuedCheckId }
-          }))
-        );
-      }
-    });
-    await this.runCoordinator.finalizeByTaskId(taskId);
-    return queuedCheckIds;
-  }
-
-  public async markFailed(taskId: string, error: ImageGenerationError): Promise<void> {
-    await this.connection.db.transaction(async (transaction) => {
-      const now = new Date();
-      await transaction
-        .update(generationTasks)
-        .set({
-          status: "failed",
-          errorCode: error.code,
-          errorMessage: error.message,
-          updatedAt: now
-        })
-        .where(
-          and(
-            eq(generationTasks.id, taskId),
-            inArray(generationTasks.status, ["queued", "running"])
-          )
-        );
-      await transaction
-        .update(generationTaskUnits)
-        .set({
-          status: "failed",
-          errorCode: error.code,
-          errorMessage: error.message,
-          updatedAt: now
-        })
-        .where(
-          and(
-            eq(generationTaskUnits.taskId, taskId),
-            inArray(generationTaskUnits.status, ["queued", "running"])
-          )
-        );
-      const [repair] = await transaction
-        .select({ checkId: subjectConsistencyRepairs.checkId })
-        .from(subjectConsistencyRepairs)
-        .where(eq(subjectConsistencyRepairs.generationTaskId, taskId))
-        .limit(1);
-      if (repair) {
-        await transaction
-          .update(subjectConsistencyChecks)
-          .set({
-            status: "execution_failed",
-            userMessage: "主体修复图片生成失败，请稍后重试或更换图片",
-            errorCode: error.code,
-            errorMessage: error.message,
-            updatedAt: now
-          })
-          .where(eq(subjectConsistencyChecks.id, repair.checkId));
-      }
-    });
-    await this.runCoordinator.finalizeByTaskId(taskId);
-  }
-
-  public async findRecoverableIds(): Promise<string[]> {
-    const rows = await this.connection.db
-      .select({ id: generationTasks.id })
-      .from(generationTasks)
-      .where(
-        and(
-          inArray(generationTasks.status, ["queued", "running"]),
-          notExists(
-            this.connection.db
-              .select({ id: generationTaskUnits.id })
-              .from(generationTaskUnits)
-              .where(eq(generationTaskUnits.taskId, generationTasks.id))
-          )
-        )
-      );
-    return rows.map((row) => row.id);
   }
 }
 
@@ -1249,6 +924,7 @@ function normalizeFailureStage(
 }
 
 function toProviderSourceRole(sourceRole: string, usage: string): SourceImageRole {
+  if (sourceRole === "brand_logo" || usage === "brand_mark") return "brand_logo";
   if (usage === "edit_target") return "edit_base";
   if (usage === "style_reference" || sourceRole === "user_reference") return "reference";
   if (["edit_base", "generated_result", "selected_result"].includes(sourceRole)) {

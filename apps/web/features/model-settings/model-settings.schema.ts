@@ -10,6 +10,7 @@ export const modelSettingsFormSchema = z
   .object({
     requirementBaseUrl: apiBaseUrlSchema,
     requirementApiKey: z.string().trim().max(1_000),
+    requirementModel: z.string().trim().min(1, "请输入模型 ID").max(200),
     promptOptimizationBaseUrl: apiBaseUrlSchema,
     promptOptimizationApiKey: z.string().trim().max(1_000),
     promptOptimizationModel: z.string().trim().min(1, "请输入模型 ID").max(200),

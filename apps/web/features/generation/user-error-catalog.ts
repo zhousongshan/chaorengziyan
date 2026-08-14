@@ -34,6 +34,48 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "联系管理员",
     retryable: false
   },
+  REQUIREMENT_AI_AUTH_FAILED: {
+    title: "需求理解服务配置异常",
+    message: "需求理解服务鉴权失败，请联系管理员。",
+    action: "contact_support",
+    actionLabel: "联系管理员",
+    retryable: false
+  },
+  REQUIREMENT_AI_CAPABILITY_UNSUPPORTED: {
+    title: "当前模型不支持需求理解",
+    message: "当前模型不支持图片或结构化需求理解，请更换模型或联系管理员。",
+    action: "contact_support",
+    actionLabel: "联系管理员",
+    retryable: false
+  },
+  REQUIREMENT_AI_TIMEOUT: {
+    title: "需求理解等待时间过长",
+    message: "本次需求理解未能及时完成，请稍后重新尝试。",
+    action: "retry",
+    actionLabel: "重新尝试",
+    retryable: true
+  },
+  REQUIREMENT_AI_RATE_LIMITED: {
+    title: "当前需求理解请求较多",
+    message: "请稍后重新尝试本次需求。",
+    action: "retry",
+    actionLabel: "稍后重试",
+    retryable: true
+  },
+  REQUIREMENT_AI_SERVICE_UNAVAILABLE: {
+    title: "需求理解服务暂时不可用",
+    message: "暂时无法完成需求理解，请稍后重新尝试。",
+    action: "retry",
+    actionLabel: "重新尝试",
+    retryable: true
+  },
+  REQUIREMENT_AI_INVALID_RESPONSE: {
+    title: "需求理解结果无效",
+    message: "需求理解结果未通过程序校验，请重新尝试。",
+    action: "retry",
+    actionLabel: "重新尝试",
+    retryable: true
+  },
   REQUIREMENT_AI_REQUEST_FAILED: {
     title: "需求理解服务暂时不可用",
     message: "暂时无法理解本次需求，请稍后重试。",
@@ -51,6 +93,13 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
   CONVERSATION_TURN_INTERRUPTED: {
     title: "需求处理已中断",
     message: "处理进程意外中断，请重新尝试本次需求。",
+    action: "retry",
+    actionLabel: "重新尝试",
+    retryable: true
+  },
+  CONVERSATION_TURN_QUEUE_UNAVAILABLE: {
+    title: "需求任务队列暂时不可用",
+    message: "需求任务多次投递失败，请稍后重新尝试。",
     action: "retry",
     actionLabel: "重新尝试",
     retryable: true
@@ -244,6 +293,34 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "刷新页面",
     retryable: false
   },
+  IMAGE_GENERATION_TASK_NOT_FOUND: {
+    title: "生图任务不存在",
+    message: "当前任务已不可用，请刷新页面后重新生成。",
+    action: "refresh",
+    actionLabel: "刷新页面",
+    retryable: false
+  },
+  IMAGE_GENERATION_UNIT_NOT_FOUND: {
+    title: "生图输出已不可用",
+    message: "当前图片任务缺少输出单元，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  IMAGE_GENERATION_TASK_DATA_CONFLICT: {
+    title: "生图任务状态已变化",
+    message: "当前任务状态已更新，请刷新页面后继续。",
+    action: "refresh",
+    actionLabel: "刷新页面",
+    retryable: true
+  },
+  IMAGE_GENERATION_TASK_ALREADY_FINISHED: {
+    title: "生图任务已结束",
+    message: "当前任务已经完成或停止，请刷新页面查看最新结果。",
+    action: "refresh",
+    actionLabel: "刷新页面",
+    retryable: false
+  },
   IMAGE_GENERATION_OUTPUT_NOT_FOUND: {
     title: "所选结果已不可用",
     message: "请刷新页面后重新选择结果。",
@@ -309,6 +386,34 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "重新生成",
     retryable: true
   },
+  IMAGE_DOWNLOAD_URL_REJECTED: {
+    title: "生图结果地址无法验证",
+    message: "生图服务返回的结果地址未通过安全校验，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  IMAGE_DOWNLOAD_REDIRECT_LIMIT: {
+    title: "生图结果地址无效",
+    message: "生图结果无法安全下载，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  INVALID_GENERATION_UNIT_OUTPUT_COUNT: {
+    title: "生图结果数量无效",
+    message: "生图服务返回的图片数量不符合本次任务，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  INVALID_IMAGE_RESUME_REQUEST: {
+    title: "上次生图任务无法恢复",
+    message: "系统无法安全继续上次任务，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
   IMAGE_DOWNLOAD_RETURNED_NON_IMAGE: invalidGeneratedImage(),
   IMAGE_BINARY_SIGNATURE_INVALID: invalidGeneratedImage(),
   IMAGE_MIME_TYPE_MISMATCH: invalidGeneratedImage(),
@@ -330,11 +435,25 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "更换图片",
     retryable: false
   },
+  SUBJECT_INSPECTION_INCONCLUSIVE: {
+    title: "图片检查未能得出结论",
+    message: "本次结果无法确认是否保持了商品主体，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
   QUALITY_ENTITY_LINEAGE_INVALID: {
     title: "商品关系需要重新选择",
     message: "当前结果无法确认每个商品对应的原图，请重新选择商品原图后生成。",
     action: "replace_image",
     actionLabel: "重新选择",
+    retryable: false
+  },
+  GENERATION_PLAN_CONTEXT_CONFLICT: {
+    title: "本次需求需要重新整理",
+    message: "当前执行计划缺少完整的本次需求，请重新提交生成要求。",
+    action: "edit_requirement",
+    actionLabel: "修改需求",
     retryable: false
   },
   GENERATION_SOURCE_NOT_DELIVERABLE: {
@@ -349,6 +468,48 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     message: "历史结果缺少可继承的商品原图关系，请重新选择商品原图后生成。",
     action: "replace_image",
     actionLabel: "重新选择",
+    retryable: false
+  },
+  SOURCE_IMAGE_NOT_AVAILABLE: {
+    title: "商品原图已不可用",
+    message: "请重新选择商品原图后生成。",
+    action: "replace_image",
+    actionLabel: "重新选择",
+    retryable: false
+  },
+  SOURCE_UNUSABLE: {
+    title: "商品原图无法用于检查",
+    message: "请更换一张更清晰、完整的商品原图。",
+    action: "replace_image",
+    actionLabel: "更换图片",
+    retryable: false
+  },
+  REQUIREMENT_NEEDS_CLARIFICATION: {
+    title: "还需要确认需求",
+    message: "请先回答当前需求中的确认问题，再开始生成。",
+    action: "edit_requirement",
+    actionLabel: "补充需求",
+    retryable: false
+  },
+  REQUIREMENT_MODEL_CONSTRAINT_CHANGED: {
+    title: "模型设置已发生变化",
+    message: "当前需求与所选模型设置不一致，请刷新后重新生成。",
+    action: "refresh",
+    actionLabel: "刷新页面",
+    retryable: true
+  },
+  GENERATION_PLAN_VERSION_UNSUPPORTED: {
+    title: "本次执行计划已过期",
+    message: "请重新提交当前需求后生成。",
+    action: "edit_requirement",
+    actionLabel: "重新提交",
+    retryable: false
+  },
+  GENERATION_PLAN_OUTPUT_COUNT_MISMATCH: {
+    title: "生成数量计划无效",
+    message: "当前需求的输出数量未通过程序校验，请重新提交。",
+    action: "edit_requirement",
+    actionLabel: "调整需求",
     retryable: false
   },
   SUBJECT_CHECK_LINEAGE_CONFLICT: {
@@ -382,6 +543,69 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
   SUBJECT_AI_REQUEST_FAILED: {
     title: "图片检查服务暂时不可用",
     message: "请稍后重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  SUBJECT_AI_TIMEOUT: {
+    title: "图片检查等待时间过长",
+    message: "本次图片检查未能及时完成，请重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  SUBJECT_AI_RATE_LIMITED: {
+    title: "当前图片检查请求较多",
+    message: "请稍后重新生成。",
+    action: "retry",
+    actionLabel: "稍后重试",
+    retryable: true
+  },
+  SUBJECT_AI_SERVICE_UNAVAILABLE: {
+    title: "图片检查服务暂时不可用",
+    message: "请稍后重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  SUBJECT_CHECK_REQUIREMENT_NOT_AVAILABLE: {
+    title: "主体检查需求已不可用",
+    message: "当前任务缺少可用的商品需求，请重新生成。",
+    action: "edit_requirement",
+    actionLabel: "修改需求",
+    retryable: false
+  },
+  SUBJECT_CHECK_IMAGE_NOT_AVAILABLE: {
+    title: "主体检查图片已不可用",
+    message: "请重新选择商品原图后生成。",
+    action: "replace_image",
+    actionLabel: "重新选择",
+    retryable: false
+  },
+  QUALITY_SOURCE_IMAGE_NOT_AVAILABLE: {
+    title: "商品原图已不可用",
+    message: "请重新选择商品原图后生成。",
+    action: "replace_image",
+    actionLabel: "重新选择",
+    retryable: false
+  },
+  SUBJECT_CONSISTENCY_EXECUTION_FAILED: {
+    title: "图片检查未能完成",
+    message: "本次图片检查未能完成，请稍后重新生成。",
+    action: "retry",
+    actionLabel: "重新生成",
+    retryable: true
+  },
+  SUBJECT_REPAIR_QUEUE_NOT_CONFIGURED: {
+    title: "主体修复服务当前不可用",
+    message: "主体修复队列尚未完成配置，请联系管理员。",
+    action: "contact_support",
+    actionLabel: "联系管理员",
+    retryable: false
+  },
+  SUBJECT_REPAIR_GENERATION_FAILED: {
+    title: "商品主体自动修复失败",
+    message: "自动修复没有完成，请重新生成或调整需求。",
     action: "retry",
     actionLabel: "重新生成",
     retryable: true

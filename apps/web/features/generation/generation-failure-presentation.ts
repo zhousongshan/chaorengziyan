@@ -29,7 +29,7 @@ export function generationOutputFailurePresentation(output: GenerationOutput) {
     return presentUserErrorCode("IMAGE_GENERATION_CANCELLED");
   }
   if (output.subjectConsistencyStatus === "source_unusable") {
-    return presentUserErrorCode("SOURCE_IMAGE_REPLACEMENT_REQUIRED");
+    return presentUserErrorCode(output.error?.code ?? "SUBJECT_INSPECTION_INCONCLUSIVE");
   }
   if (
     output.subjectConsistencyStatus === "completed" &&

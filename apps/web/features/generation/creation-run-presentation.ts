@@ -82,7 +82,11 @@ export function deriveWorkflowError(
   const executionFailure = checks?.find((check) => check.status === "execution_failed");
   if (executionFailure) return presentUserErrorCode(executionFailure.error?.code);
   const insufficientSource = checks?.find((check) => check.status === "source_unusable");
-  if (insufficientSource) return presentUserErrorCode("SOURCE_IMAGE_REPLACEMENT_REQUIRED");
+  if (insufficientSource) {
+    return presentUserErrorCode(
+      insufficientSource.error?.code ?? "SUBJECT_INSPECTION_INCONCLUSIVE"
+    );
+  }
   if (
     checks?.length &&
     checks.every((check) => ["completed", "cancelled"].includes(check.status)) &&

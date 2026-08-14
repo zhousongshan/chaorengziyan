@@ -184,10 +184,11 @@ class FakeStore implements SubjectConsistencyTaskStore {
   public createOrFindRepair(
     _checkId: string,
     value: FinalRequirement
-  ): Promise<{ generationTaskId: string; created: boolean }> {
+  ): Promise<{ generationTaskId: string; generationUnitId: string; created: boolean }> {
     this.repairRequirement = value;
     return Promise.resolve({
       generationTaskId: "00000000-0000-4000-8000-000000000060",
+      generationUnitId: "00000000-0000-4000-8000-000000000062",
       created: true
     });
   }
@@ -343,7 +344,7 @@ describe("SubjectConsistencyProcessor", () => {
   it("applies only the constrained patch and keeps the original creative requirement immutable", async () => {
     const store = new FakeStore();
     const imageQueue: ImageGenerationQueuePublisher = {
-      enqueue: vi.fn(() => Promise.resolve()),
+      enqueueUnit: vi.fn(() => Promise.resolve()),
       close: vi.fn(() => Promise.resolve())
     };
     const { processor, inspect } = createProcessor(
@@ -375,7 +376,7 @@ describe("SubjectConsistencyProcessor", () => {
     const store = new FakeStore();
     const enqueue = vi.fn(() => Promise.resolve());
     const imageQueue: ImageGenerationQueuePublisher = {
-      enqueue,
+      enqueueUnit: enqueue,
       close: vi.fn(() => Promise.resolve())
     };
     const { processor, inspect } = createProcessor(
@@ -391,7 +392,10 @@ describe("SubjectConsistencyProcessor", () => {
     expect(store.completed).toHaveLength(0);
     expect(store.repairRequirement?.imageCount).toBe(1);
     expect(store.repairRequirement?.mustKeep).toContain("商品保持白色");
-    expect(enqueue).toHaveBeenCalledWith("00000000-0000-4000-8000-000000000060");
+    expect(enqueue).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000060",
+      "00000000-0000-4000-8000-000000000062"
+    );
   });
 
   it("uses the repaired image B for the second inspection", async () => {
@@ -414,7 +418,7 @@ describe("SubjectConsistencyProcessor", () => {
       })
     );
     const imageQueue: ImageGenerationQueuePublisher = {
-      enqueue: vi.fn(() => Promise.resolve()),
+      enqueueUnit: vi.fn(() => Promise.resolve()),
       close: vi.fn(() => Promise.resolve())
     };
     const { processor, inspect } = createProcessor(
@@ -455,7 +459,7 @@ describe("SubjectConsistencyProcessor", () => {
       })
     );
     const imageQueue: ImageGenerationQueuePublisher = {
-      enqueue: vi.fn(() => Promise.resolve()),
+      enqueueUnit: vi.fn(() => Promise.resolve()),
       close: vi.fn(() => Promise.resolve())
     };
     const { processor } = createProcessor(store, [failedResult], reconciliation, imageQueue);
@@ -502,7 +506,7 @@ describe("SubjectConsistencyProcessor", () => {
       })
     );
     const imageQueue: ImageGenerationQueuePublisher = {
-      enqueue: vi.fn(() => Promise.resolve()),
+      enqueueUnit: vi.fn(() => Promise.resolve()),
       close: vi.fn(() => Promise.resolve())
     };
     const {

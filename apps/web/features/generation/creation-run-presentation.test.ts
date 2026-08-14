@@ -44,6 +44,10 @@ describe("creation run presentation", () => {
 
   it("maps insufficient source evidence to replacing the product image", () => {
     const input = check({ status: "source_unusable" });
+    input.error = {
+      code: "SOURCE_IMAGE_REPLACEMENT_REQUIRED",
+      message: "商品事实原图无法提供可辨认的主体身份特征"
+    };
     input.attempts = [
       {
         round: 1,

@@ -1,7 +1,5 @@
 import type { Environment } from "@chaoren/contracts";
 
-export const MULTIMODAL_REQUIREMENT_MODEL = "gpt-5.6-sol";
-
 export interface MultimodalAiConfiguration {
   baseUrl: string;
   apiKey: string | undefined;
@@ -12,22 +10,11 @@ export interface MultimodalAiConfiguration {
 export function getConversationRequirementConfiguration(
   environment: Environment
 ): MultimodalAiConfiguration {
-  if (
-    environment.REQUIREMENT_AI_MODEL === MULTIMODAL_REQUIREMENT_MODEL &&
-    environment.REQUIREMENT_AI_API_KEY
-  ) {
-    return {
-      baseUrl: environment.REQUIREMENT_AI_BASE_URL,
-      apiKey: environment.REQUIREMENT_AI_API_KEY,
-      model: environment.REQUIREMENT_AI_MODEL,
-      timeoutMs: environment.REQUIREMENT_AI_TIMEOUT_MS
-    };
-  }
   return {
-    baseUrl: environment.SUBJECT_INSPECTION_AI_BASE_URL,
-    apiKey: environment.SUBJECT_INSPECTION_AI_API_KEY,
-    model: environment.SUBJECT_INSPECTION_AI_MODEL,
-    timeoutMs: environment.SUBJECT_INSPECTION_AI_TIMEOUT_MS
+    baseUrl: environment.REQUIREMENT_AI_BASE_URL,
+    apiKey: environment.REQUIREMENT_AI_API_KEY,
+    model: environment.REQUIREMENT_AI_MODEL,
+    timeoutMs: environment.REQUIREMENT_AI_TIMEOUT_MS
   };
 }
 

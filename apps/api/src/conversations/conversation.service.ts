@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Inject,
   Injectable,
   NotFoundException
@@ -466,16 +467,14 @@ export class ConversationService {
             : null
       });
     } catch (error) {
+      const classifiedError = classifyConversationTurnError(error);
       await this.conversations.failTurn({
         sessionId: run.sessionId,
         userId: run.userId,
         messageId,
         leaseToken: run.leaseToken,
-        errorCode:
-          error instanceof ConversationContextLimitError
-            ? "CONVERSATION_CONTEXT_LIMIT_EXCEEDED"
-            : "CONVERSATION_TURN_FAILED",
-        errorMessage: error instanceof Error ? error.message : "会话处理失败"
+        errorCode: classifiedError.code,
+        errorMessage: classifiedError.message
       });
       throw error instanceof Error ? error : new Error("会话处理失败");
     } finally {
@@ -545,6 +544,36 @@ export class ConversationService {
   }
 }
 
+function classifyConversationTurnError(error: unknown): {
+  code: string;
+  message: string;
+} {
+  if (error instanceof ConversationContextLimitError) {
+    return {
+      code: "CONVERSATION_CONTEXT_LIMIT_EXCEEDED",
+      message: "当前会话内容过多，请新建会话后继续创作。"
+    };
+  }
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (isErrorResponse(response) && typeof response.code === "string") {
+      return {
+        code: response.code,
+        message:
+          typeof response.message === "string" ? response.message : "会话处理失败，请稍后重试。"
+      };
+    }
+  }
+  return {
+    code: "CONVERSATION_TURN_FAILED",
+    message: "会话处理失败，请稍后重试。"
+  };
+}
+
+function isErrorResponse(value: unknown): value is { code: unknown; message?: unknown } {
+  return typeof value === "object" && value !== null && "code" in value;
+}
+
 function mergeMessages(...groups: ConversationMessage[][]): ConversationMessage[] {
   const byId = new Map(groups.flat().map((message) => [message.id, message]));
   return [...byId.values()].sort(
@@ -569,7 +598,7 @@ function bindGenerationPlan(
   if (!draft) return null;
   const newEntityIds = new Map<string, string>();
   return {
-    schemaVersion: "2.0",
+    schemaVersion: "3.0",
     summary: draft.summary,
     groups: draft.groups.map((group) => {
       const qualityImageKeys = new Set(
@@ -581,6 +610,20 @@ function bindGenerationPlan(
         outputCount: group.outputCount,
         outputLayout: group.outputLayout,
         instruction: group.instruction,
+        subjectPolicy: group.subjectPolicy,
+        referenceDesignPlan: group.referenceDesignPlan,
+        copyPlan: group.copyPlan,
+        referenceAnalyses: group.referenceAnalyses.map((analysis) => {
+          const binding = imageBindings.get(analysis.imageKey);
+          if (!binding || binding.modelInput.role !== "user_reference") {
+            throw new Error("参考分析只能绑定本分组的参考图");
+          }
+          return {
+            assetId: binding.assetId,
+            observedDesign: analysis.observedDesign,
+            transferPlan: analysis.transferPlan
+          };
+        }),
         subjectEntities: group.subjectEntities.map((entity) => ({
           entityKey: entity.entityKey,
           label: entity.label,
@@ -695,6 +738,9 @@ function collectRelevantAssets(
   const hasCurrentReferences = request.attachments.some(
     (attachment) => attachment.role === "user_reference"
   );
+  const isLocalEdit =
+    request.attachments.some((attachment) => attachment.role === "edit_base") &&
+    !hasCurrentReferences;
   if (!hasCurrentProduct && !request.clearProductImage) {
     assets.push(
       ...state.activeProductAssetIds.map((assetId) => ({
@@ -704,7 +750,7 @@ function collectRelevantAssets(
       }))
     );
   }
-  if (!hasCurrentReferences && !request.clearReferenceImages) {
+  if (!hasCurrentReferences && !request.clearReferenceImages && !isLocalEdit) {
     assets.push(
       ...state.referenceAssetIds.map((assetId) => ({
         assetId,
@@ -794,19 +840,25 @@ function toRequirementRequest(
   const references =
     referenceAttachments.length > 0
       ? referenceAttachments.map((attachment) => attachment.assetId)
-      : request.clearReferenceImages
+      : editBaseAttachment
         ? []
-        : state.referenceAssetIds;
+        : request.clearReferenceImages
+          ? []
+          : state.referenceAssetIds;
   const editBaseId = editBaseAttachment?.assetId ?? null;
   const referenceGuidance =
     referenceAttachments.length > 0
       ? referenceAttachments.map((attachment) => ({
           assetId: attachment.assetId,
-          instruction: attachment.relation ?? "仅参考该图的场景、构图或视觉风格，不作为商品主体事实"
+          instruction:
+            attachment.relation ??
+            "先理解参考图的优点、问题、版式和文字层级，再按当前商品重新设计；默认不复制参考商品、品牌或原文案，可规划非事实型创意文字"
         }))
-      : request.clearReferenceImages
+      : editBaseAttachment
         ? []
-        : state.referenceGuidance;
+        : request.clearReferenceImages
+          ? []
+          : state.referenceGuidance;
   return {
     projectId: session.projectId,
     modelId: request.modelId,

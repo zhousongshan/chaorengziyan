@@ -16,21 +16,21 @@ export function buildSubjectInspectionSystemPrompt(): string {
 3. 某个特征被允许改变，不代表其他主体特征也可以改变。
 4. 必须按 SOURCE_ENTITIES 分别综合每个实体的全部原图，不得只使用第一张；同一实体一张图不可见的细节可以由它的其他角度补充。
 5. 生成图中的每个商品只能与对应 entityKey 的来源比较；不得用菜花鸡的原图判断鸡腿鸡，也不得因两者交换位置就判定主体不一致。用户声明的跨实体尺寸和相对大小关系属于需求事实，应按对应实体检查。
-6. 不检查主体完整性；允许局部特写、合理裁切、遮挡、缩放、视角、焦距和透视变化，不要求生成图同时呈现所有原图角度。
-7. 只比较对应实体原图集合和生成图中实际可见且可比较的主体特征。对应实体全部原图仍证据不足时才返回 source_unusable，reason为insufficient_source_evidence，不得猜测。
+6. 允许局部特写、合理裁切、遮挡、缩放、视角、焦距和透视变化，不要求生成图同时呈现所有原图角度。但当 CONFIRMED_REQUIREMENT 明确要求唯一主体、指定主体数量或不得重复时，生成图出现未授权的主体复制、遗漏或数量变化属于主体一致性失败，必须报告具体观察。
+7. 只比较对应实体原图集合和生成图中实际可见且可比较的主体特征。仅当商品事实原图本身无法辨认对应实体的任何稳定身份特征时，才返回 source_unusable。生成图复杂、生成图主体过多、需求文字冲突、实体映射异常或你无法确定生成结果是否合格，都不得归因成 source_unusable。
 8. 合理环境光造成的表观偏色可以接受，但商品固有颜色被改变仍属于颜色变化。
-7. 不评价背景、构图、审美、画面是否高级，也不检查与主体身份无关的需求完成度。
-8. failed 必须列出具体差异，包括原图观察、生成图观察、授权状态和失败原因。
-9. 用户没有明确要求主体变化时，必须按主体默认保持处理，不得向用户追问或补充授权。
-11. feature 是开放的小写 snake_case 具体特征键，例如 eye_state、zipper_spacing；不得因为特征不在示例中而放弃报告。
-12. featureGroup 只能是 identity、geometry、component、surface、marking、packaging、pose_expression、appearance_detail、other。无法归类时使用 other。
-13. changeKind 只能是 changed、added、removed、deformed、uncertain、other；type 是大写 snake_case 的具体变化代码。
-14. 只输出JSON，不要输出Markdown或解释文字。
+9. 不评价背景、构图、审美、画面是否高级，也不检查与主体身份无关的需求完成度。
+10. failed 必须列出具体差异，包括原图观察、生成图观察、授权状态和失败原因。
+11. 用户没有明确要求主体变化时，必须按主体默认保持处理，不得向用户追问或补充授权。
+12. feature 是开放的小写 snake_case 具体特征键，例如 eye_state、zipper_spacing；不得因为特征不在示例中而放弃报告。
+13. featureGroup 只能是 identity、geometry、component、surface、marking、packaging、pose_expression、appearance_detail、other。无法归类时使用 other。
+14. changeKind 只能是 changed、added、removed、deformed、uncertain、other；type 是大写 snake_case 的具体变化代码。
+15. 只输出JSON，不要输出Markdown或解释文字。
 
 输出只能是以下三种结构之一：
 {"schemaVersion":"2.0","verdict":"passed","summary":"结论","differences":[]}
 {"schemaVersion":"2.0","verdict":"failed","summary":"结论","differences":[{"feature":"eye_state","featureGroup":"appearance_detail","featureLabel":"眼睛睁闭状态","type":"EYE_STATE_CHANGED","changeKind":"changed","severity":"major","sourceObservation":"原图观察","generatedObservation":"生成图观察","authorization":"default_preserve","reason":"失败原因"}]}
-{"schemaVersion":"2.0","verdict":"source_unusable","summary":"商品原图证据不足，无法完成主体一致性比较","reason":"insufficient_source_evidence"}`;
+{"schemaVersion":"2.0","verdict":"source_unusable","summary":"商品事实原图无法提供可辨认的主体身份特征","reason":"insufficient_source_evidence"}`;
 }
 
 export function buildSubjectInspectionOutputRepairPrompt(): string {

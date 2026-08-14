@@ -1,10 +1,13 @@
 import { Inject, Injectable } from "@nestjs/common";
+import { eq } from "drizzle-orm";
 
 import { requirementAiAttempts, type DatabaseConnection } from "@chaoren/database";
 
 import { DATABASE_CONNECTION } from "../database/database.constants.js";
 import type {
-  RequirementAiAttemptRecord,
+  BeginRequirementAiAttemptInput,
+  CompleteRequirementAiAttemptInput,
+  FailRequirementAiAttemptInput,
   RequirementAiAttemptRepository
 } from "./requirement-ai-attempt.repository.js";
 
@@ -14,18 +17,56 @@ export class DrizzleRequirementAiAttemptRepository implements RequirementAiAttem
     @Inject(DATABASE_CONNECTION) private readonly connection: DatabaseConnection
   ) {}
 
-  public async save(record: RequirementAiAttemptRecord): Promise<void> {
-    await this.connection.db.insert(requirementAiAttempts).values({
-      sessionId: record.sessionId,
-      sourceMessageId: record.sourceMessageId,
-      attemptNumber: record.attemptNumber,
-      status: record.status,
-      rawOutput: toJsonValue(record.rawOutput),
-      validationIssues: record.validationIssues,
-      aiModel: record.aiModel,
-      promptVersion: record.promptVersion,
-      contractVersion: record.contractVersion
-    });
+  public async begin(input: BeginRequirementAiAttemptInput): Promise<string> {
+    const [created] = await this.connection.db
+      .insert(requirementAiAttempts)
+      .values({
+        sessionId: input.sessionId,
+        sourceMessageId: input.sourceMessageId,
+        attemptNumber: input.attemptNumber,
+        phase: input.phase,
+        phaseAttemptNumber: input.phaseAttemptNumber,
+        status: "running",
+        rawOutput: null,
+        validationIssues: [],
+        aiModel: input.aiModel,
+        promptVersion: input.promptVersion,
+        contractVersion: input.contractVersion,
+        startedAt: input.startedAt
+      })
+      .returning({ id: requirementAiAttempts.id });
+    if (!created) throw new Error("REQUIREMENT_AI_ATTEMPT_CREATE_FAILED");
+    return created.id;
+  }
+
+  public async complete(input: CompleteRequirementAiAttemptInput): Promise<void> {
+    await this.connection.db
+      .update(requirementAiAttempts)
+      .set({
+        status: input.status,
+        rawOutput: toJsonValue(input.rawOutput),
+        validationIssues: input.validationIssues,
+        completedAt: input.completedAt,
+        durationMs: input.durationMs,
+        errorCode: null,
+        errorPhase: null,
+        errorDetails: null
+      })
+      .where(eq(requirementAiAttempts.id, input.id));
+  }
+
+  public async fail(input: FailRequirementAiAttemptInput): Promise<void> {
+    await this.connection.db
+      .update(requirementAiAttempts)
+      .set({
+        status: "request_failed",
+        completedAt: input.completedAt,
+        durationMs: input.durationMs,
+        errorCode: input.errorCode,
+        errorPhase: input.errorPhase,
+        errorDetails: toJsonValue(input.errorDetails)
+      })
+      .where(eq(requirementAiAttempts.id, input.id));
   }
 }
 

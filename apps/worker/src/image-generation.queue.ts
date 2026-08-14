@@ -2,36 +2,30 @@ import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 
 import {
-  IMAGE_GENERATION_JOB_NAME,
   IMAGE_GENERATION_UNIT_MAX_ATTEMPTS,
   IMAGE_GENERATION_UNIT_JOB_NAME,
   imageGenerationUnitJobId,
   type Environment,
-  type ImageGenerationJobData,
   type ImageGenerationUnitJobData
 } from "@chaoren/contracts";
 
 export interface ImageGenerationQueuePublisher {
-  enqueue(taskId: string): Promise<void>;
-  enqueueUnit?(taskId: string, unitId: string): Promise<void>;
+  enqueueUnit(taskId: string, unitId: string): Promise<void>;
   close(): Promise<void>;
 }
 
 export class BullMqImageGenerationQueuePublisher implements ImageGenerationQueuePublisher {
   private readonly connection: Redis;
-  private readonly queue: Queue<ImageGenerationJobData | ImageGenerationUnitJobData>;
+  private readonly queue: Queue<ImageGenerationUnitJobData>;
 
   public constructor(private readonly environment: Environment) {
     this.connection = new Redis(environment.REDIS_URL, {
       enableReadyCheck: false,
       maxRetriesPerRequest: 1
     });
-    this.queue = new Queue<ImageGenerationJobData | ImageGenerationUnitJobData>(
-      environment.TASK_QUEUE_NAME,
-      {
-        connection: this.connection
-      }
-    );
+    this.queue = new Queue<ImageGenerationUnitJobData>(environment.TASK_QUEUE_NAME, {
+      connection: this.connection
+    });
   }
 
   public async enqueueUnit(taskId: string, unitId: string): Promise<void> {
@@ -45,25 +39,6 @@ export class BullMqImageGenerationQueuePublisher implements ImageGenerationQueue
       {
         jobId,
         attempts: IMAGE_GENERATION_UNIT_MAX_ATTEMPTS,
-        backoff: { type: "exponential", delay: this.environment.IMAGE_JOB_BACKOFF_MS },
-        removeOnComplete: { age: 24 * 60 * 60, count: 10_000 },
-        removeOnFail: { age: 7 * 24 * 60 * 60, count: 50_000 }
-      }
-    );
-  }
-
-  public async enqueue(taskId: string): Promise<void> {
-    const existing = await this.queue.getJob(taskId);
-    const state = await existing?.getState();
-    if (existing && (state === "completed" || state === "failed")) {
-      await existing.remove();
-    }
-    await this.queue.add(
-      IMAGE_GENERATION_JOB_NAME,
-      { schemaVersion: "1.0", taskId },
-      {
-        jobId: taskId,
-        attempts: this.environment.IMAGE_JOB_ATTEMPTS,
         backoff: { type: "exponential", delay: this.environment.IMAGE_JOB_BACKOFF_MS },
         removeOnComplete: { age: 24 * 60 * 60, count: 10_000 },
         removeOnFail: { age: 7 * 24 * 60 * 60, count: 50_000 }

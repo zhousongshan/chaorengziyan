@@ -14,7 +14,8 @@ import type {
   PromptOptimizationRepairInput
 } from "./prompt-optimization-ai.port.js";
 import {
-  buildPromptOptimizationSystemPrompt,
+  buildPromptOptimizationImageDecisionSystemPrompt,
+  buildPromptOptimizationTextSystemPrompt,
   PROMPT_OPTIMIZATION_CONTRACT_VERSION
 } from "./prompt-optimization.prompt.js";
 
@@ -34,18 +35,35 @@ export class OpenAiCompatiblePromptOptimizationAiAdapter implements PromptOptimi
     return this.configuration.model;
   }
 
+  public decideImages(input: PromptOptimizationAiInput): Promise<unknown> {
+    return this.complete({
+      systemPrompt: buildPromptOptimizationImageDecisionSystemPrompt(),
+      userText: `请判断以下当前输入是否依赖图片：${JSON.stringify(toImageDecisionModelInput(input))}`,
+      images: input.images
+    });
+  }
+
   public optimize(input: PromptOptimizationAiInput): Promise<unknown> {
-    return this.complete(`请优化以下输入：${JSON.stringify(toModelInput(input))}`, input.images);
+    return this.complete({
+      systemPrompt: buildPromptOptimizationTextSystemPrompt(),
+      userText: `请优化以下输入：${JSON.stringify(toModelInput(input))}`,
+      images: input.images
+    });
   }
 
   public repair(input: PromptOptimizationRepairInput): Promise<unknown> {
-    return this.complete(
-      `上一次输出未通过程序校验。只能修正 JSON 结构、图片判断状态、图片 key、明确数量或比例的保真问题，不得改变用户原意。\n原始输入：${JSON.stringify(toModelInput(input))}\n上一次输出：${JSON.stringify(input.previousOutput)}\n校验问题：${JSON.stringify(input.validationIssues)}\ncontractVersion 必须为 ${PROMPT_OPTIMIZATION_CONTRACT_VERSION}。`,
-      input.images
-    );
+    return this.complete({
+      systemPrompt: buildPromptOptimizationTextSystemPrompt(),
+      userText: `上一次优化稿未通过程序校验。只能修正 JSON 结构、明确数量或比例的保真问题，不得改变用户原意。\n原始输入：${JSON.stringify(toModelInput(input))}\n上一次输出：${JSON.stringify(input.previousOutput)}\n校验问题：${JSON.stringify(input.validationIssues)}\ncontractVersion 必须为 ${PROMPT_OPTIMIZATION_CONTRACT_VERSION}。`,
+      images: input.images
+    });
   }
 
-  private async complete(userText: string, images: PromptOptimizationImage[]): Promise<unknown> {
+  private async complete(input: {
+    systemPrompt: string;
+    userText: string;
+    images: PromptOptimizationImage[];
+  }): Promise<unknown> {
     if (!this.configuration.apiKey) throw new PromptOptimizationAiConfigurationError();
     const baseUrl = this.configuration.baseUrl.endsWith("/")
       ? this.configuration.baseUrl
@@ -61,15 +79,15 @@ export class OpenAiCompatiblePromptOptimizationAiAdapter implements PromptOptimi
         temperature: 0.2,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: buildPromptOptimizationSystemPrompt() },
+          { role: "system", content: input.systemPrompt },
           {
             role: "user",
             content:
-              images.length === 0
-                ? userText
+              input.images.length === 0
+                ? input.userText
                 : [
-                    { type: "text", text: userText },
-                    ...images.flatMap((image) => [
+                    { type: "text", text: input.userText },
+                    ...input.images.flatMap((image) => [
                       {
                         type: "text",
                         text: `图片 ${image.key}；角色=${image.role}；来源=${image.source}；关系=${image.relation ?? "未说明"}`
@@ -105,6 +123,18 @@ export class OpenAiCompatiblePromptOptimizationAiAdapter implements PromptOptimi
       return content;
     }
   }
+}
+
+function toImageDecisionModelInput(input: PromptOptimizationAiInput) {
+  return {
+    text: input.text,
+    images: input.images.map(({ key, role, source, relation }) => ({
+      key,
+      role,
+      source,
+      relation
+    }))
+  };
 }
 
 function toModelInput(input: PromptOptimizationAiInput) {

@@ -25,21 +25,11 @@ export const generationTaskSchema = z
 
 export type GenerationTask = z.infer<typeof generationTaskSchema>;
 
-export const IMAGE_GENERATION_JOB_NAME = "image.generate.v1";
 export const IMAGE_GENERATION_UNIT_JOB_NAME = "image.generate.unit.v2";
 
 export function imageGenerationUnitJobId(taskId: string, unitId: string): string {
   return `${taskId}-${unitId}`;
 }
-
-export const imageGenerationJobDataSchema = z
-  .object({
-    schemaVersion: z.literal("1.0"),
-    taskId: z.uuid()
-  })
-  .strict();
-
-export type ImageGenerationJobData = z.infer<typeof imageGenerationJobDataSchema>;
 
 export const imageGenerationUnitJobDataSchema = z
   .object({

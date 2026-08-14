@@ -1,0 +1,1 @@
+ALTER TABLE "workflow_events" ADD COLUMN "terminal_at" timestamp with time zone;

@@ -102,7 +102,7 @@ export interface SubjectConsistencyTaskStore {
     checkId: string,
     requirement: FinalRequirement
   ): Promise<{ generationTaskId: string; generationUnitId?: string; created: boolean }>;
-  markRepairEnqueued(generationTaskId: string, generationUnitId?: string): Promise<void>;
+  markRepairEnqueued(generationTaskId: string, generationUnitId: string): Promise<void>;
   markSourceUnusable(checkId: string, message: string): Promise<void>;
   complete(
     checkId: string,
@@ -341,6 +341,17 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
       );
     }
 
+    const [generationUnit] = check.generationUnitId
+      ? await this.connection.db
+          .select({ requirementSnapshot: generationTaskUnits.requirementSnapshot })
+          .from(generationTaskUnits)
+          .where(eq(generationTaskUnits.id, check.generationUnitId))
+          .limit(1)
+      : [];
+    const inspectionRequirement = generationUnit?.requirementSnapshot
+      ? finalRequirementSchema.parse(generationUnit.requirementSnapshot)
+      : requirementResult.data.finalRequirement;
+
     return {
       id: check.id,
       userId: check.userId,
@@ -350,7 +361,7 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
       status: check.status,
       phase: check.phase,
       originalUserText: request.data.userText,
-      originalRequirement: requirementResult.data.finalRequirement,
+      originalRequirement: inspectionRequirement,
       sourceProducts: sources.map((source) => ({
         id: source!.id,
         storageKey: source!.storageKey,
@@ -573,6 +584,27 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
         );
       }
       const request = resolveRequirementRequestSchema.parse(rootRun.request);
+      const originalPlan = resolvedGenerationPlanSchema.safeParse(rootRun.executionPlan);
+      const [originalUnit] = check.generationUnitId
+        ? await transaction
+            .select({ groupPosition: generationTaskUnits.groupPosition })
+            .from(generationTaskUnits)
+            .where(eq(generationTaskUnits.id, check.generationUnitId))
+            .limit(1)
+        : [];
+      if (!originalPlan.success || originalPlan.data.schemaVersion !== "3.0" || !originalUnit) {
+        throw new SubjectConsistencyTaskDataError(
+          "SUBJECT_CHECK_EXECUTION_PLAN_UNAVAILABLE",
+          "原始生图单元缺少新版冻结执行方案，不能自动修复"
+        );
+      }
+      const originalGroup = originalPlan.data.groups[originalUnit.groupPosition];
+      if (!originalGroup) {
+        throw new SubjectConsistencyTaskDataError(
+          "SUBJECT_CHECK_EXECUTION_PLAN_UNAVAILABLE",
+          "原始生图单元对应的冻结分组不存在，不能自动修复"
+        );
+      }
       const storedUnitSources = check.generationUnitId
         ? await transaction
             .select()
@@ -580,37 +612,55 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
             .where(eq(generationTaskUnitSources.unitId, check.generationUnitId))
             .orderBy(asc(generationTaskUnitSources.position))
         : [];
-      const fallbackProductSources =
-        storedUnitSources.length > 0
-          ? []
-          : await transaction
-              .select({ assetId: subjectConsistencyCheckSources.assetId })
-              .from(subjectConsistencyCheckSources)
-              .where(eq(subjectConsistencyCheckSources.checkId, checkId))
-              .orderBy(asc(subjectConsistencyCheckSources.position));
+      const storedPlanSources = storedUnitSources.filter(
+        (source) => source.sourceRole !== "brand_logo" && source.usage !== "brand_mark"
+      );
+      if (
+        storedPlanSources.length === 0 ||
+        !sameFrozenSources(originalGroup.sourceImages, storedPlanSources)
+      ) {
+        throw new SubjectConsistencyTaskDataError(
+          "SUBJECT_CHECK_EXECUTION_PLAN_UNAVAILABLE",
+          "原始生图单元的冻结图片来源与执行方案不一致，不能自动修复"
+        );
+      }
+      const baseRepairPlanSources = storedUnitSources.map((source, position) => ({
+        assetId: source.assetId,
+        sourceRole: source.sourceRole,
+        usage: source.usage,
+        position
+      }));
+      const hasBrandLogo = baseRepairPlanSources.some(
+        (source) => source.sourceRole === "brand_logo" || source.usage === "brand_mark"
+      );
       const repairPlanSources =
-        storedUnitSources.length > 0
-          ? storedUnitSources.map((source, position) => ({
-              assetId: source.assetId,
-              sourceRole: source.sourceRole,
-              usage: source.usage,
-              position
-            }))
-          : fallbackProductSources.map((source, position) => ({
-              assetId: source.assetId,
-              sourceRole: "product_source",
-              usage: "subject_fact",
-              position
-            }));
+        request.deliverySettings.watermark.enabled &&
+        request.deliverySettings.watermark.assetId &&
+        !hasBrandLogo
+          ? [
+              ...baseRepairPlanSources,
+              {
+                assetId: request.deliverySettings.watermark.assetId,
+                sourceRole: "brand_logo" as const,
+                usage: "brand_mark" as const,
+                position: baseRepairPlanSources.length
+              }
+            ]
+          : baseRepairPlanSources;
       const repairPlan = resolvedGenerationPlanSchema.parse({
-        schemaVersion: "1.0",
+        schemaVersion: "3.0",
         summary: "针对质检失败输出的单元修复计划",
         groups: [
           {
             sourceImages: repairPlanSources,
+            subjectEntities: originalGroup.subjectEntities,
+            subjectPolicy: originalGroup.subjectPolicy,
+            referenceAnalyses: originalGroup.referenceAnalyses,
+            referenceDesignPlan: originalGroup.referenceDesignPlan,
+            copyPlan: originalGroup.copyPlan,
             outputCount: 1,
             outputLayout: "separate_image",
-            instruction: "仅修复质检指出的主体差异，不扩大用户原始修改范围"
+            instruction: originalGroup.instruction
           }
         ]
       });
@@ -629,6 +679,34 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
           )?.assetId ?? null
       });
       const repairedRequirement: FinalRequirement = { ...requirement, imageCount: 1 };
+      const repairReferenceAnalyses = originalGroup.referenceAnalyses.map((analysis) => {
+        const sourceImageNumber =
+          repairPlanSources.findIndex((source) => source.assetId === analysis.assetId) + 1;
+        if (sourceImageNumber <= 0) {
+          throw new SubjectConsistencyTaskDataError(
+            "SUBJECT_CHECK_EXECUTION_PLAN_UNAVAILABLE",
+            "参考分析没有对应的冻结参考图，不能自动修复"
+          );
+        }
+        return { ...analysis, sourceImageNumber };
+      });
+      const repairInstruction = buildImageGenerationInstruction(
+        repairedRequirement,
+        {
+          editBase: repairRequest.editBaseImageId ? 1 : 0,
+          product: repairRequest.productImageIds.length,
+          reference: repairRequest.referenceImageIds.length
+        },
+        {
+          generationGoal: repairRequest.imageSettings.generationGoal,
+          referenceGuidance: repairRequest.referenceGuidance,
+          referenceAnalyses: repairReferenceAnalyses,
+          referenceDesignPlan: originalGroup.referenceDesignPlan,
+          copyPlan: originalGroup.copyPlan,
+          orderedSourceRoles: repairPlanSources.map(toImageGenerationSourceRole),
+          brandLogoPosition: repairRequest.deliverySettings.watermark.position
+        }
+      );
       const requirementRunId = randomUUID();
       const generationTaskId = randomUUID();
       const generationUnitId = randomUUID();
@@ -666,18 +744,7 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
         idempotencyKey: generationTaskId,
         kind: "image",
         modelId: rootTask.modelId,
-        instruction: buildImageGenerationInstruction(
-          repairedRequirement,
-          {
-            editBase: repairRequest.editBaseImageId ? 1 : 0,
-            product: repairRequest.productImageIds.length,
-            reference: repairRequest.referenceImageIds.length
-          },
-          {
-            generationGoal: repairRequest.imageSettings.generationGoal,
-            referenceGuidance: repairRequest.referenceGuidance
-          }
-        ),
+        instruction: repairInstruction,
         instructionVersion: IMAGE_GENERATION_INSTRUCTION_VERSION,
         status: "queued",
         createdAt: now,
@@ -690,18 +757,8 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
         groupPosition: 0,
         variantPosition: 0,
         outputLayout: "separate_image",
-        instruction: buildImageGenerationInstruction(
-          repairedRequirement,
-          {
-            editBase: repairRequest.editBaseImageId ? 1 : 0,
-            product: repairRequest.productImageIds.length,
-            reference: repairRequest.referenceImageIds.length
-          },
-          {
-            generationGoal: repairRequest.imageSettings.generationGoal,
-            referenceGuidance: repairRequest.referenceGuidance
-          }
-        ),
+        instruction: repairInstruction,
+        requirementSnapshot: repairedRequirement,
         status: "queued",
         createdAt: now,
         updatedAt: now
@@ -831,19 +888,16 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
   }
 
   public async markRepairEnqueued(
-    generationTaskId: string,
-    generationUnitId?: string
+    _generationTaskId: string,
+    generationUnitId: string
   ): Promise<void> {
     await this.connection.db
       .update(workflowEvents)
       .set({ publishedAt: new Date(), lastError: null })
       .where(
         and(
-          eq(
-            workflowEvents.eventType,
-            generationUnitId ? "generation.unit.enqueue" : "generation.task.enqueue"
-          ),
-          eq(workflowEvents.entityId, generationUnitId ?? generationTaskId),
+          eq(workflowEvents.eventType, "generation.unit.enqueue"),
+          eq(workflowEvents.entityId, generationUnitId),
           isNull(workflowEvents.publishedAt)
         )
       );
@@ -863,6 +917,8 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
         .set({
           status: "source_unusable",
           userMessage: message,
+          errorCode: "SUBJECT_INSPECTION_INCONCLUSIVE",
+          errorMessage: message,
           updatedAt: new Date()
         })
         .where(
@@ -1059,6 +1115,43 @@ export class DrizzleSubjectConsistencyTaskStore implements SubjectConsistencyTas
 
 function sameIdSet(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value) => right.includes(value));
+}
+
+function sameFrozenSources(
+  expected: Array<{ assetId: string; sourceRole: string; usage: string }>,
+  stored: Array<{ assetId: string; sourceRole: string; usage: string; position: number }>
+): boolean {
+  return (
+    expected.length === stored.length &&
+    expected.every((source, index) => {
+      const candidate = stored[index];
+      return (
+        candidate?.position === index &&
+        candidate.assetId === source.assetId &&
+        candidate.sourceRole === source.sourceRole &&
+        candidate.usage === source.usage
+      );
+    })
+  );
+}
+
+function toImageGenerationSourceRole(source: {
+  sourceRole: string;
+  usage: string;
+}): "edit_base" | "product" | "reference" | "brand_logo" {
+  if (source.sourceRole === "brand_logo" || source.usage === "brand_mark") {
+    return "brand_logo";
+  }
+  if (source.usage === "style_reference" || source.sourceRole === "user_reference") {
+    return "reference";
+  }
+  if (
+    source.usage === "edit_target" ||
+    ["edit_base", "generated_result", "selected_result"].includes(source.sourceRole)
+  ) {
+    return "edit_base";
+  }
+  return "product";
 }
 
 async function rejectActiveCheckCandidates(

@@ -145,17 +145,27 @@ async function completeJson(options: CompletionOptions): Promise<unknown> {
   } catch (error) {
     if (options.signal?.aborted) throw options.signal.reason;
     throw new SubjectConsistencyProviderError(
-      "SUBJECT_AI_REQUEST_FAILED",
-      error instanceof Error ? error.message : "主体质检AI请求失败",
+      error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+        ? "SUBJECT_AI_TIMEOUT"
+        : "SUBJECT_AI_REQUEST_FAILED",
+      "主体图片检查服务请求失败",
       true
     );
   }
 
   if (!response.ok) {
-    const message = (await response.text()).slice(0, 1_000);
+    await response.text().catch(() => "");
+    const code =
+      response.status === 429
+        ? "SUBJECT_AI_RATE_LIMITED"
+        : response.status === 401 || response.status === 403
+          ? "SUBJECT_INSPECTION_NOT_CONFIGURED"
+          : response.status >= 500
+            ? "SUBJECT_AI_SERVICE_UNAVAILABLE"
+            : "SUBJECT_AI_REQUEST_FAILED";
     throw new SubjectConsistencyProviderError(
-      "SUBJECT_AI_REQUEST_FAILED",
-      `AI请求失败 (${response.status}): ${message}`,
+      code,
+      "主体图片检查服务未能处理本次请求",
       response.status === 408 || response.status === 429 || response.status >= 500
     );
   }
@@ -166,7 +176,7 @@ async function completeJson(options: CompletionOptions): Promise<unknown> {
   } catch (error) {
     throw new SubjectConsistencyProviderError(
       "INVALID_SUBJECT_AI_RESPONSE",
-      error instanceof Error ? error.message : "AI响应格式无效",
+      "主体图片检查服务返回了无效结果",
       true
     );
   }

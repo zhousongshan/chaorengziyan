@@ -39,6 +39,7 @@ export interface PromptOptimizationRepairInput extends PromptOptimizationAiInput
 }
 
 export interface PromptOptimizationAiPort {
+  decideImages(input: PromptOptimizationAiInput): Promise<unknown>;
   optimize(input: PromptOptimizationAiInput): Promise<unknown>;
   repair(input: PromptOptimizationRepairInput): Promise<unknown>;
   getModelName(): string;

@@ -37,7 +37,7 @@ describe("buildImageGenerationInstruction", () => {
     });
 
     expect(instruction).toContain("输入图片1-4为同一商品的多角度或细节图");
-    expect(instruction).toContain("输入图片5-5为参考图");
+    expect(instruction).toContain("输入图片5-5为设计语言参考图，不作为商品事实");
   });
 
   it("only permits explicitly authorized subject changes", () => {
@@ -92,5 +92,44 @@ describe("buildImageGenerationInstruction", () => {
 
     expect(instruction).toContain("输入图片1为本执行单元的编辑目标");
     expect(instruction).not.toContain("输入图片1-4为同一商品");
+  });
+
+  it("compiles the complete reference analysis into the provider instruction", () => {
+    const instruction = buildImageGenerationInstruction(
+      requirement,
+      { product: 1, reference: 1 },
+      {
+        orderedSourceRoles: ["product", "reference"],
+        referenceAnalyses: [
+          {
+            assetId: "00000000-0000-4000-8000-000000000012",
+            sourceImageNumber: 2,
+            observedDesign: {
+              sellingPointPresentation: "左侧用标题和标签表达卖点",
+              composition: "信息左置、商品右置",
+              informationHierarchy: "品牌、主标题、辅助卖点分三级",
+              typography: "粗体主标题搭配圆角标签",
+              colorAndLighting: "绿色主色与柔和棚拍光",
+              spacingAndRhythm: "左右分区并保留充足边距",
+              propsAndScene: "桌面道具形成前后层次"
+            },
+            transferPlan: {
+              adopt: ["采用左右分栏和三级信息层级"],
+              adapt: ["将参考商品替换为当前商品"],
+              avoid: ["不复制参考品牌和原文案"],
+              userPriority: ["优先参考版式"]
+            }
+          }
+        ]
+      }
+    );
+
+    expect(instruction).toContain("输入图片2的结构化参考分析");
+    expect(instruction).toContain("构图布局：信息左置、商品右置");
+    expect(instruction).toContain("信息层级：品牌、主标题、辅助卖点分三级");
+    expect(instruction).toContain("文字与字体：粗体主标题搭配圆角标签");
+    expect(instruction).toContain("必须采用：采用左右分栏和三级信息层级");
+    expect(instruction).toContain("用户指定的优先参考项：优先参考版式");
+    expect(instruction).toContain("不得成为当前商品事实");
   });
 });

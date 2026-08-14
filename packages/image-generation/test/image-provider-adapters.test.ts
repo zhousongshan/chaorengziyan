@@ -92,7 +92,7 @@ describe("image provider adapters", () => {
     const prompt = form.get("prompt");
     expect(typeof prompt).toBe("string");
     expect(prompt).toContain("输入图片1-1为同一商品的多角度或细节图");
-    expect(prompt).toContain("输入图片2-2为参考图");
+    expect(prompt).toContain("输入图片2-2为设计语言参考图，不作为商品事实");
     expect(prompt).toContain("用户没有授权修改任何商品主体特征");
   });
 

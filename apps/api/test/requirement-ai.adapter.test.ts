@@ -49,9 +49,9 @@ describe("OpenAiCompatibleRequirementAiAdapter multimodal conversation", () => {
       NODE_ENV: "test",
       DATABASE_URL: "postgresql://test:test@127.0.0.1:5432/test",
       REDIS_URL: "redis://127.0.0.1:6379",
-      REQUIREMENT_AI_BASE_URL: "https://api.deepseek.com",
-      REQUIREMENT_AI_API_KEY: "legacy-text-key",
-      REQUIREMENT_AI_MODEL: "deepseek-v4-flash",
+      REQUIREMENT_AI_BASE_URL: "https://jennyapi.site/v1",
+      REQUIREMENT_AI_API_KEY: "multimodal-key",
+      REQUIREMENT_AI_MODEL: "gpt-5.6-sol",
       SUBJECT_INSPECTION_AI_BASE_URL: "https://jennyapi.site/v1",
       SUBJECT_INSPECTION_AI_API_KEY: "multimodal-key",
       SUBJECT_INSPECTION_AI_MODEL: "gpt-5.6-sol"

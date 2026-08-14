@@ -12,7 +12,8 @@ describe("subject consistency prompts", () => {
   it("keeps the product preserved unless a subject change is explicit", () => {
     const prompt = buildSubjectInspectionSystemPrompt();
     expect(prompt).toContain("商品主体默认保持不变");
-    expect(prompt).toContain("不检查主体完整性");
+    expect(prompt).toContain("明确要求唯一主体、指定主体数量或不得重复时");
+    expect(prompt).toContain("未授权的主体复制、遗漏或数量变化属于主体一致性失败");
     expect(prompt).toContain("用户没有明确要求主体变化时");
     expect(prompt).toContain("SOURCE_ENTITIES");
     expect(prompt).toContain("不同实体不得互相替代或合并比较");

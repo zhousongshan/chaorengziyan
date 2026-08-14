@@ -80,7 +80,11 @@ function createService(options: {
     authorization,
     requirementAi,
     new InMemoryRequirementRunRepository(),
-    { save: vi.fn(() => Promise.resolve()) },
+    {
+      begin: vi.fn(() => Promise.resolve("00000000-0000-4000-8000-000000000099")),
+      complete: vi.fn(() => Promise.resolve()),
+      fail: vi.fn(() => Promise.resolve())
+    },
     new RequirementResultValidator(),
     new ImageModelCatalog(environment),
     projects,
@@ -112,7 +116,112 @@ const context = {
   }
 };
 
+const atomicGroupDefaults = {
+  subjectPolicy: { defaultAction: "preserve" as const, allowedChanges: [] },
+  referenceAnalyses: [],
+  instruction: "按当前分组需求生成"
+};
+
 describe("RequirementService conversation contract", () => {
+  it("isolates stale product requirements when the current turn uploads a fresh product", async () => {
+    const freshProductAssetId = "00000000-0000-4000-8000-000000000071";
+    const { service, resolveConversation } = createService({
+      conversationOutput: {
+        contractVersion: "4.0",
+        action: "generate",
+        assistantReply: "按新商品生成",
+        requirements: { intent: "为当前商品生成白底主图" },
+        quantityDecision: { source: "ui_control", value: 1, rule: "采用页面数量控件" },
+        generationPlan: {
+          schemaVersion: "3.0",
+          summary: "只处理当前新商品",
+          groups: [
+            {
+              ...atomicGroupDefaults,
+              sourceImages: [{ imageKey: "fresh_product", usage: "subject_fact" }],
+              subjectEntities: [
+                {
+                  entityKey: "current_product",
+                  label: "当前商品",
+                  lineageKind: "new_product_source",
+                  sourceImageKeys: ["fresh_product"]
+                }
+              ],
+              outputCount: 1,
+              outputLayout: "separate_image"
+            }
+          ]
+        }
+      }
+    });
+    const staleRequirement = {
+      ...readyResult().finalRequirement,
+      intent: "把旧商品改成小猪花卉马赛克",
+      subjectPolicy: {
+        defaultAction: "preserve" as const,
+        allowedChanges: [{ feature: "pattern" as const, instruction: "把包装改成小猪花卉马赛克" }]
+      }
+    };
+    const freshContext = {
+      ...context,
+      sessionState: {
+        ...emptyConversationState,
+        activeProductAssetIds: ["00000000-0000-4000-8000-000000000070"],
+        currentRequirement: staleRequirement,
+        unresolvedQuestions: ["旧商品需要什么花纹？"],
+        fieldSources: {
+          intent: {
+            messageId: "00000000-0000-4000-8000-000000000072",
+            turnNumber: 1
+          }
+        }
+      },
+      currentTurn: {
+        ...context.currentTurn,
+        text: "用这个新商品生成白底主图",
+        attachments: [
+          { assetId: freshProductAssetId, role: "product_source" as const, relation: null }
+        ]
+      }
+    };
+
+    await service.resolveConversationOutput(
+      {
+        ...request,
+        userText: freshContext.currentTurn.text,
+        productImageIds: [freshProductAssetId]
+      },
+      freshContext,
+      [
+        {
+          key: "fresh_product",
+          role: "product_source",
+          relation: null,
+          mimeType: "image/png",
+          content: Buffer.from("fresh-product"),
+          productEntities: []
+        }
+      ]
+    );
+
+    expect(resolveConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionState: expect.objectContaining({
+          activeProductAssetIds: [freshProductAssetId],
+          currentRequirement: null,
+          currentGenerationPlan: null,
+          unresolvedQuestions: [],
+          fieldSources: {}
+        })
+      }),
+      expect.any(Object),
+      expect.any(Array)
+    );
+    const serializedAiContext = JSON.stringify(resolveConversation.mock.calls[0]?.[0]);
+    expect(serializedAiContext).not.toContain("小猪");
+    expect(serializedAiContext).not.toContain("马赛克");
+  });
+
   it("uses explicit text quantity over the UI and repairs one wrong AI decision", async () => {
     const userText = "生成的商品主图是4张完整且独立的";
     const wrongOutput = {
@@ -122,10 +231,15 @@ describe("RequirementService conversation contract", () => {
       requirements: { imageCount: 3, intent: userText },
       quantityDecision: { source: "ui_control", value: 3, rule: "采用页面控件" },
       generationPlan: {
-        schemaVersion: "2.0",
+        schemaVersion: "3.0",
         summary: "错误的三张计划",
         groups: [
-          { sourceImages: [], outputCount: 3, outputLayout: "separate_image", instruction: null }
+          {
+            ...atomicGroupDefaults,
+            sourceImages: [],
+            outputCount: 3,
+            outputLayout: "separate_image"
+          }
         ]
       }
     };
@@ -145,10 +259,15 @@ describe("RequirementService conversation contract", () => {
           evidenceEnd: evidenceQuote.length
         },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "四张独立输出",
           groups: [
-            { sourceImages: [], outputCount: 4, outputLayout: "separate_image", instruction: null }
+            {
+              ...atomicGroupDefaults,
+              sourceImages: [],
+              outputCount: 4,
+              outputLayout: "separate_image"
+            }
           ]
         }
       }
@@ -185,10 +304,15 @@ describe("RequirementService conversation contract", () => {
       requirements: { imageCount: 3, intent: userText },
       quantityDecision: { source: "ui_control", value: 3, rule: "采用页面控件" },
       generationPlan: {
-        schemaVersion: "2.0",
+        schemaVersion: "3.0",
         summary: "错误的三张计划",
         groups: [
-          { sourceImages: [], outputCount: 3, outputLayout: "separate_image", instruction: null }
+          {
+            ...atomicGroupDefaults,
+            sourceImages: [],
+            outputCount: 3,
+            outputLayout: "separate_image"
+          }
         ]
       }
     };
@@ -262,10 +386,11 @@ describe("RequirementService conversation contract", () => {
         quantityDecision: { source: "ui_control", value: 1, rule: "采用页面数量控件" },
         requirements: { intent: "把背景换成花园", background: "户外花园" },
         generationPlan: {
-          schemaVersion: "2.0",
+          schemaVersion: "3.0",
           summary: "修改上一张结果",
           groups: [
             {
+              ...atomicGroupDefaults,
               sourceImages: [{ imageKey: "image_1", usage: "edit_target" }],
               outputCount: 1,
               outputLayout: "separate_image",

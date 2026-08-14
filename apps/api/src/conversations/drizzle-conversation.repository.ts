@@ -891,10 +891,12 @@ export class DrizzleConversationRepository implements ConversationRepository {
   public async findDispatchableTurnMessageIds(input: {
     now: string;
     maxAttempts: number;
+    maxEnqueueAttempts?: number;
     limit: number;
   }): Promise<string[]> {
     const now = new Date();
     const expiresAt = new Date(input.now);
+    const maxEnqueueAttempts = input.maxEnqueueAttempts ?? input.maxAttempts;
     await this.connection.db.transaction(async (tx) => {
       const exhausted = await tx
         .select({
@@ -967,11 +969,65 @@ export class DrizzleConversationRepository implements ConversationRepository {
             sql`${conversationTurnRuns.attemptCount} < ${input.maxAttempts}`
           )
         );
+      const enqueueExhausted = await tx
+        .select({
+          messageId: conversationTurnRuns.messageId,
+          sessionId: conversationTurnRuns.sessionId,
+          userId: conversationTurnRuns.userId
+        })
+        .from(conversationTurnRuns)
+        .where(
+          and(
+            eq(conversationTurnRuns.status, "queued"),
+            sql`${conversationTurnRuns.enqueueAttempts} >= ${maxEnqueueAttempts}`
+          )
+        )
+        .for("update");
+      for (const run of enqueueExhausted) {
+        await tx
+          .update(conversationMessages)
+          .set({
+            status: "failed",
+            errorCode: "CONVERSATION_TURN_QUEUE_UNAVAILABLE",
+            errorMessage: "会话任务队列投递失败，已达到自动恢复上限",
+            updatedAt: now
+          })
+          .where(
+            and(
+              eq(conversationMessages.id, run.messageId),
+              eq(conversationMessages.sessionId, run.sessionId)
+            )
+          );
+        await tx
+          .update(conversationSessions)
+          .set({ processingMessageId: null, updatedAt: now })
+          .where(
+            and(
+              eq(conversationSessions.id, run.sessionId),
+              eq(conversationSessions.userId, run.userId),
+              eq(conversationSessions.processingMessageId, run.messageId)
+            )
+          );
+        await tx
+          .update(conversationTurnRuns)
+          .set({
+            status: "failed",
+            completedAt: now,
+            lastError: "会话任务队列投递失败，已达到自动恢复上限",
+            updatedAt: now
+          })
+          .where(eq(conversationTurnRuns.messageId, run.messageId));
+      }
     });
     const rows = await this.connection.db
       .select({ messageId: conversationTurnRuns.messageId })
       .from(conversationTurnRuns)
-      .where(eq(conversationTurnRuns.status, "queued"))
+      .where(
+        and(
+          eq(conversationTurnRuns.status, "queued"),
+          sql`${conversationTurnRuns.enqueueAttempts} < ${maxEnqueueAttempts}`
+        )
+      )
       .orderBy(asc(conversationTurnRuns.createdAt))
       .limit(input.limit);
     return rows.map((row) => row.messageId);
@@ -983,7 +1039,7 @@ export class DrizzleConversationRepository implements ConversationRepository {
       .set({
         enqueueAttempts: sql`${conversationTurnRuns.enqueueAttempts} + 1`,
         lastEnqueueAttemptAt: new Date(),
-        lastError: errorMessage ?? null,
+        lastError: errorMessage ? "会话任务队列投递失败，等待自动恢复" : null,
         updatedAt: new Date()
       })
       .where(eq(conversationTurnRuns.messageId, messageId));

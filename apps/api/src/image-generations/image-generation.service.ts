@@ -13,6 +13,7 @@ import {
 
 import {
   createImageGenerationRequestSchema,
+  finalRequirementSchema,
   imageGenerationSessionListQuerySchema,
   regenerateImageGenerationOutputRequestSchema,
   type CreateImageGenerationResponse,
@@ -57,6 +58,8 @@ import {
   type ImageGenerationTaskRepository
 } from "./image-generation-task.repository.js";
 
+type CurrentGenerationPlan = Extract<ResolvedGenerationPlan, { schemaVersion: "3.0" }>;
+
 @Injectable()
 export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
   private dispatchTimer?: NodeJS.Timeout;
@@ -74,14 +77,10 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   public async onModuleInit(): Promise<void> {
-    const [recoverableUnits, legacyTaskIds] = await Promise.all([
-      this.tasks.findRecoverableUnits(),
-      this.tasks.findRecoverableLegacyTaskIds()
-    ]);
-    await Promise.allSettled([
-      ...recoverableUnits.map((unit) => this.queue.enqueueUnit(unit.taskId, unit.unitId)),
-      ...legacyTaskIds.map((taskId) => this.queue.enqueue(taskId))
-    ]);
+    const recoverableUnits = await this.tasks.findRecoverableUnits();
+    await Promise.allSettled(
+      recoverableUnits.map((unit) => this.queue.enqueueUnit(unit.taskId, unit.unitId))
+    );
     if (this.tasks.claimPendingDispatches) {
       await this.dispatchPendingEvents();
       this.dispatchTimer = setInterval(() => void this.dispatchPendingEvents(), 2_000);
@@ -146,11 +145,35 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
     await this.mediaAssets.getOwnedImages(assetIds, run.request.projectId);
     await this.mediaAssets.assertProductAvailableIds(assetIds);
 
-    const plan = run.executionPlan ?? buildLegacyGenerationPlan(run.request, imageCount);
+    if (!run.executionPlan || run.executionPlan.schemaVersion !== "3.0") {
+      throw new ConflictException({
+        code: "GENERATION_PLAN_VERSION_UNSUPPORTED",
+        message: "当前需求缺少新版参考图与原子单元执行契约，请重新进行需求识别"
+      });
+    }
+    const plan = run.executionPlan;
     if (generationPlanOutputCount(plan) !== imageCount) {
       throw new ConflictException({
         code: "GENERATION_PLAN_OUTPUT_COUNT_MISMATCH",
         message: "执行计划输出数量与已确认需求不一致，请重新进行需求识别"
+      });
+    }
+    if (plan.groups.some((group) => !group.instruction?.trim())) {
+      throw new ConflictException({
+        code: "GENERATION_PLAN_CONTEXT_CONFLICT",
+        message: "本次执行计划缺少完整的单元需求，请重新进行需求识别"
+      });
+    }
+    if (
+      plan.groups.some(
+        (group) =>
+          group.referenceAnalyses.length > 0 &&
+          (!group.referenceDesignPlan || group.copyPlan === undefined)
+      )
+    ) {
+      throw new ConflictException({
+        code: "GENERATION_PLAN_CONTEXT_CONFLICT",
+        message: "本次参考图执行计划缺少理解、版式或文案规划，请重新进行需求识别"
       });
     }
     const units = expandGenerationUnits(plan, run.result.finalRequirement, run.request);
@@ -164,18 +187,7 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
       idempotencyKey: parsedRequest.data.idempotencyKey,
       projectId: run.request.projectId,
       modelId: model.id,
-      instruction: buildImageGenerationInstruction(
-        run.result.finalRequirement,
-        {
-          editBase: run.request.editBaseImageId ? 1 : 0,
-          product: run.request.productImageIds.length,
-          reference: run.request.referenceImageIds.length
-        },
-        {
-          generationGoal: run.request.imageSettings.generationGoal,
-          referenceGuidance: run.request.referenceGuidance
-        }
-      ),
+      instruction: "本任务只允许按已冻结的执行单元指令执行。",
       instructionVersion: IMAGE_GENERATION_INSTRUCTION_VERSION,
       status: "queued",
       resultAssets: [],
@@ -266,9 +278,8 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
         try {
           if (event.eventType === "generation.unit.enqueue" && event.unitId) {
             await this.queue.enqueueUnit(event.taskId, event.unitId);
-          } else if (event.eventType === "generation.task.enqueue") {
-            await this.queue.enqueue(event.taskId);
           } else {
+            await this.tasks.markDispatchPublished(event.eventId);
             continue;
           }
           await this.tasks.markDispatchPublished(event.eventId);
@@ -355,6 +366,19 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
     ) {
       throw new NotFoundException({ code: "REQUIREMENT_RUN_NOT_FOUND" });
     }
+    if (!sourceRun.executionPlan || sourceRun.executionPlan.schemaVersion !== "3.0") {
+      throw new ConflictException({
+        code: "GENERATION_PLAN_VERSION_UNSUPPORTED",
+        message: "该历史结果缺少新版冻结执行契约，不能再次生成"
+      });
+    }
+    const sourceGroup = sourceRun.executionPlan.groups[sourceUnit.groupPosition];
+    if (!sourceGroup) {
+      throw new ConflictException({
+        code: "GENERATION_PLAN_CONTEXT_CONFLICT",
+        message: "历史结果对应的冻结执行分组不存在"
+      });
+    }
     this.imageModels.getEnabled(sourceTask.modelId);
     const sourceAssetIds = [
       ...new Set([
@@ -383,11 +407,25 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
       imageSettings: { ...sourceRun.request.imageSettings, imageCount: 1 }
     };
     const executionPlan: ResolvedGenerationPlan = {
-      schemaVersion: "2.0",
+      schemaVersion: "3.0",
       summary: `再次生成来源执行单元 ${sourceUnit.unitId}`,
       groups: [
         {
           sourceImages: sourceUnit.sources.map((source) => ({ ...source })),
+          subjectPolicy: sourceGroup.subjectPolicy,
+          referenceDesignPlan: sourceGroup.referenceDesignPlan,
+          copyPlan: sourceGroup.copyPlan,
+          referenceAnalyses: sourceGroup.referenceAnalyses.map((analysis) => ({
+            ...analysis,
+            observedDesign: { ...analysis.observedDesign },
+            transferPlan: {
+              ...analysis.transferPlan,
+              adopt: [...analysis.transferPlan.adopt],
+              adapt: [...analysis.transferPlan.adapt],
+              avoid: [...analysis.transferPlan.avoid],
+              userPriority: [...analysis.transferPlan.userPriority]
+            }
+          })),
           subjectEntities: (sourceUnit.subjectEntities ?? []).map((entity) => ({
             ...entity,
             lineageKind: "inherited_product_entity" as const,
@@ -396,7 +434,7 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
           })),
           outputCount: 1,
           outputLayout: sourceUnit.outputLayout,
-          instruction: sourceUnit.instruction
+          instruction: sourceUnit.instruction ?? sourceTask.instruction
         }
       ]
     };
@@ -435,7 +473,7 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
       idempotencyKey: parsed.data.idempotencyKey,
       projectId: sourceTask.projectId,
       modelId: sourceTask.modelId,
-      instruction: sourceUnit.instruction ?? sourceTask.instruction,
+      instruction: "本任务只允许按已冻结的执行单元指令执行。",
       instructionVersion: sourceTask.instructionVersion,
       status: "queued",
       resultAssets: [],
@@ -451,6 +489,7 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
           variantPosition: 0,
           outputLayout: sourceUnit.outputLayout,
           instruction: sourceUnit.instruction,
+          requirementSnapshot: sourceUnit.requirementSnapshot ?? requirement,
           sources: sourceUnit.sources.map((source) => ({ ...source })),
           qualitySourceAssetIds: [...sourceUnit.qualitySourceAssetIds],
           subjectEntities: (sourceUnit.subjectEntities ?? []).map((entity) => ({
@@ -652,47 +691,67 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
 }
 
 function expandGenerationUnits(
-  plan: ResolvedGenerationPlan,
+  plan: CurrentGenerationPlan,
   requirement: FinalRequirement,
   request: ResolveRequirementRequest
 ) {
   let position = 0;
-  const units = plan.groups.flatMap((group, groupPosition) =>
-    Array.from({ length: group.outputCount }, (_, variantPosition) => ({
+  const units = plan.groups.flatMap((group, groupPosition) => {
+    const sourceImages = appendBrandLogoSource(group.sourceImages, request.deliverySettings);
+    const instruction = group.instruction;
+    if (!instruction) {
+      throw new InvalidQualityEntityLineageError("生图执行单元缺少冻结需求指令");
+    }
+    const requirementSnapshot = buildUnitRequirementSnapshot(
+      requirement,
+      instruction,
+      group.subjectPolicy
+    );
+    return Array.from({ length: group.outputCount }, (_, variantPosition) => ({
       unitId: randomUUID(),
       position: position++,
       groupPosition,
       variantPosition,
       outputLayout: group.outputLayout,
+      requirementSnapshot,
       instruction: [
         buildImageGenerationInstruction(
-          { ...requirement, imageCount: 1 },
+          requirementSnapshot,
           {
-            editBase: group.sourceImages.filter((source) => toProviderRole(source) === "edit_base")
+            editBase: sourceImages.filter((source) => toProviderRole(source) === "edit_base")
               .length,
-            product: group.sourceImages.filter((source) => toProviderRole(source) === "product")
-              .length,
-            reference: group.sourceImages.filter((source) => toProviderRole(source) === "reference")
+            product: sourceImages.filter((source) => toProviderRole(source) === "product").length,
+            reference: sourceImages.filter((source) => toProviderRole(source) === "reference")
               .length
           },
           {
             generationGoal: request.imageSettings.generationGoal,
             referenceGuidance: request.referenceGuidance.filter((guidance) =>
-              group.sourceImages.some((source) => source.assetId === guidance.assetId)
+              sourceImages.some((source) => source.assetId === guidance.assetId)
             ),
-            orderedSourceRoles: group.sourceImages.map(toProviderRole)
+            referenceAnalyses: group.referenceAnalyses.map((analysis) => {
+              const sourceImageNumber =
+                sourceImages.findIndex((source) => source.assetId === analysis.assetId) + 1;
+              if (sourceImageNumber <= 0) {
+                throw new InvalidQualityEntityLineageError("参考分析没有对应的执行单元参考图");
+              }
+              return { ...analysis, sourceImageNumber };
+            }),
+            referenceDesignPlan: group.referenceDesignPlan,
+            copyPlan: group.copyPlan,
+            orderedSourceRoles: sourceImages.map(toProviderRole),
+            brandLogoPosition: request.deliverySettings.watermark.position
           }
         ),
-        `本执行单元输出形式：${group.outputLayout}。`,
-        group.instruction ?? ""
+        `本执行单元输出形式：${group.outputLayout}。`
       ]
         .filter(Boolean)
         .join("\n"),
-      sources: group.sourceImages,
+      sources: sourceImages,
       subjectEntities: group.subjectEntities,
       qualitySourceAssetIds: [] as string[]
-    }))
-  );
+    }));
+  });
   return units.map((unit) => {
     const subjectEntities = (unit.subjectEntities ?? []).map((entity) => {
       if (!entity.productEntityId || entity.lineageKind === "legacy_unverified") {
@@ -715,6 +774,26 @@ function expandGenerationUnits(
       qualitySourceAssetIds,
       subjectEntities
     };
+  });
+}
+
+function buildUnitRequirementSnapshot(
+  requirement: FinalRequirement,
+  instruction: string,
+  subjectPolicy: FinalRequirement["subjectPolicy"]
+): FinalRequirement {
+  return finalRequirementSchema.parse({
+    imageCount: 1,
+    aspectRatio: requirement.aspectRatio,
+    intent: instruction,
+    scene: null,
+    background: null,
+    composition: null,
+    lighting: null,
+    style: null,
+    mustKeep: [],
+    mustAvoid: [],
+    subjectPolicy
   });
 }
 
@@ -748,7 +827,10 @@ function deriveWorkflowStatus(
 
 function toProviderRole(
   source: ResolvedGenerationPlan["groups"][number]["sourceImages"][number]
-): "edit_base" | "product" | "reference" {
+): "edit_base" | "product" | "reference" | "brand_logo" {
+  if (source.sourceRole === "brand_logo" || source.usage === "brand_mark") {
+    return "brand_logo";
+  }
   if (source.usage === "style_reference" || source.sourceRole === "user_reference")
     return "reference";
   if (source.usage === "edit_target") return "edit_base";
@@ -758,62 +840,22 @@ function toProviderRole(
   return "product";
 }
 
-function buildLegacyGenerationPlan(
-  request: ResolveRequirementRequest,
-  outputCount: number
-): ResolvedGenerationPlan {
-  if (request.editBaseImageId || request.productImageIds.length > 1) {
-    throw new InvalidQualityEntityLineageError("旧执行计划无法确定多商品或历史图片的实体血缘");
-  }
-  const sources: ResolvedGenerationPlan["groups"][number]["sourceImages"] = [];
-  let position = 0;
-  if (request.editBaseImageId) {
-    sources.push({
-      assetId: request.editBaseImageId,
-      sourceRole: "edit_base",
-      usage: "edit_target",
-      position: position++
-    });
-  }
-  for (const assetId of request.productImageIds) {
-    sources.push({
-      assetId,
-      sourceRole: "product_source",
-      usage: "subject_fact",
-      position: position++
-    });
-  }
-  for (const assetId of request.referenceImageIds) {
-    sources.push({
-      assetId,
-      sourceRole: "user_reference",
-      usage: "style_reference",
-      position: position++
-    });
-  }
-  return {
-    schemaVersion: "2.0",
-    summary: "兼容历史需求的单组生图计划",
-    groups: [
-      {
-        sourceImages: sources,
-        subjectEntities:
-          request.productImageIds.length === 1
-            ? [
-                {
-                  entityKey: "legacy_product",
-                  label: "历史商品主体",
-                  productEntityId: randomUUID(),
-                  lineageKind: "new_product_source",
-                  inheritedFromAssetId: null,
-                  sourceAssetIds: [...request.productImageIds]
-                }
-              ]
-            : [],
-        outputCount,
-        outputLayout: "separate_image",
-        instruction: null
-      }
-    ]
-  };
+function appendBrandLogoSource(
+  sources: ResolvedGenerationPlan["groups"][number]["sourceImages"],
+  deliverySettings: ResolveRequirementRequest["deliverySettings"]
+): ResolvedGenerationPlan["groups"][number]["sourceImages"] {
+  const watermark = deliverySettings.watermark;
+  const withoutPreviousLogo = sources
+    .filter((source) => source.sourceRole !== "brand_logo" && source.usage !== "brand_mark")
+    .map((source, position) => ({ ...source, position }));
+  if (!watermark.enabled || !watermark.assetId) return withoutPreviousLogo;
+  return [
+    ...withoutPreviousLogo,
+    {
+      assetId: watermark.assetId,
+      sourceRole: "brand_logo",
+      usage: "brand_mark",
+      position: withoutPreviousLogo.length
+    }
+  ];
 }

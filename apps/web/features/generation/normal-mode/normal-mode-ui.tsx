@@ -63,12 +63,11 @@ export function NormalModeComposer({
   submitDisabled,
   submitLabel,
   submitUnavailableReason,
-  optimization,
   optimizationPending,
+  canUndoOptimization,
   onModelChange,
   onOptimize,
   onUndoOptimization,
-  onOptimizeAgain,
   onPaste,
   onDraggingChange,
   onFileChange,
@@ -89,12 +88,11 @@ export function NormalModeComposer({
   submitDisabled: boolean;
   submitLabel: string;
   submitUnavailableReason?: string;
-  optimization: PromptOptimizationComposerState | null;
   optimizationPending: boolean;
+  canUndoOptimization: boolean;
   onModelChange: (modelId: string) => void;
   onOptimize: () => void;
   onUndoOptimization: () => void;
-  onOptimizeAgain: () => void;
   onPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
   onDraggingChange: (dragging: boolean) => void;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -240,26 +238,6 @@ export function NormalModeComposer({
         </div>
       </div>
 
-      {optimization && (
-        <section className={styles.optimizationPanel} aria-label="提示词优化操作">
-          <span>
-            <WandSparkles />
-            {optimization.pending ? "正在优化" : "已优化"}
-          </span>
-          {optimization.error && <p>{optimization.error}</p>}
-          <div>
-            <button type="button" disabled={optimization.pending} onClick={onUndoOptimization}>
-              <Undo2 />
-              撤回
-            </button>
-            <button type="button" disabled={optimization.pending} onClick={onOptimizeAgain}>
-              <WandSparkles />
-              再次优化
-            </button>
-          </div>
-        </section>
-      )}
-
       <div className={styles.composerActions}>
         <div className={styles.composerOptions}>
           <CompactSelect label="普通模式" ariaLabel="生成模式" disabled>
@@ -293,6 +271,18 @@ export function NormalModeComposer({
             {optimizationPending ? <LoaderCircle className="spin" /> : <WandSparkles />}
             {optimizationPending ? "正在优化" : "提示词优化"}
           </button>
+          {canUndoOptimization && (
+            <button
+              className={styles.undoOptimizationButton}
+              type="button"
+              disabled={busy || optimizationPending}
+              onClick={onUndoOptimization}
+              title="撤回最近一次提示词优化"
+            >
+              <Undo2 />
+              撤回
+            </button>
+          )}
         </div>
         <button
           className={styles.generateButton}
@@ -308,11 +298,6 @@ export function NormalModeComposer({
     </div>
   );
 }
-
-export type PromptOptimizationComposerState = {
-  pending: boolean;
-  error: string | null;
-};
 
 function CompactSelect({
   label,
