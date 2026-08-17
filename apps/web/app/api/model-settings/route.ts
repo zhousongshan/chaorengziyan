@@ -132,9 +132,9 @@ function toResponse(
         apiKeyConfigured: Boolean(requirementApiKey)
       },
       image: {
-        provider: "Jenny API · OpenAI",
+        provider: "xfastapi.ai · OpenAI 兼容接口",
         model: fixedModelConfiguration.OPENAI_IMAGE_MODEL,
-        baseUrl: values.OPENAI_IMAGE_BASE_URL || "https://jennyapi.site/v1",
+        baseUrl: values.OPENAI_IMAGE_BASE_URL || "https://xfastapi.ai",
         apiKeyConfigured: Boolean(values.OPENAI_IMAGE_API_KEY)
       },
       inspection: {

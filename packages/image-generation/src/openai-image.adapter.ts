@@ -98,7 +98,7 @@ export class OpenAiImageAdapter implements ImageProviderAdapter {
     const prompt = input.instruction;
     const endpoint = input.sources.length > 0 ? "images/edits" : "images/generations";
     const url = `${this.baseUrl}/${endpoint}`;
-    const size = officialSizeByRatio[input.requirement.aspectRatio] ?? "auto";
+    const size = this.sizeFor(input);
     const headers = { Authorization: `Bearer ${this.apiKey}` };
     const response =
       input.sources.length > 0
@@ -396,6 +396,16 @@ export class OpenAiImageAdapter implements ImageProviderAdapter {
 
   private get baseUrl(): string {
     return this.environment.OPENAI_IMAGE_BASE_URL.replace(/\/$/, "");
+  }
+
+  private sizeFor(input: ImageGenerationInput): string {
+    if (this.environment.OPENAI_IMAGE_API_MODE === "xfastapi") {
+      return (
+        relaySizeByPreset[input.renderSettings.resolutionPreset]?.[input.requirement.aspectRatio] ??
+        "2048x2048"
+      );
+    }
+    return officialSizeByRatio[input.requirement.aspectRatio] ?? "auto";
   }
 
   private get apiKey(): string {

@@ -2,7 +2,7 @@ export const fixedModelConfiguration = {
   REQUIREMENT_AI_MODEL: "gpt-5.6-sol",
   SUBJECT_INSPECTION_AI_MODEL: "gpt-5.6-sol",
   OPENAI_IMAGE_MODEL: "gpt-image-2",
-  OPENAI_IMAGE_API_MODE: "async-relay",
+  OPENAI_IMAGE_API_MODE: "xfastapi",
   ENABLED_IMAGE_MODELS: "openai-image"
 } as const;
 

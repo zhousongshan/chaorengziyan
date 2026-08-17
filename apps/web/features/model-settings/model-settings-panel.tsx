@@ -45,7 +45,7 @@ export function ModelSettingsPanel() {
       requirementBaseUrl: "https://jennyapi.site/v1",
       requirementApiKey: "",
       requirementModel: "gpt-5.6-sol",
-      imageBaseUrl: "https://jennyapi.site/v1",
+      imageBaseUrl: "https://xfastapi.ai",
       imageApiKey: "",
       inspectionBaseUrl: "https://jennyapi.site/v1",
       inspectionApiKey: ""

@@ -190,6 +190,52 @@ describe("image provider adapters", () => {
     expect(prompt).toContain("用户没有授权修改任何商品主体特征");
   });
 
+  it("uses xfastapi sync mode and maps the selected resolution preset", async () => {
+    const environment = environmentSchema.parse({
+      ...baseEnvironment,
+      OPENAI_IMAGE_BASE_URL: "https://xfastapi.ai",
+      OPENAI_IMAGE_API_KEY: "test-xfastapi-key",
+      OPENAI_IMAGE_MODEL: "gpt-image-2",
+      OPENAI_IMAGE_API_MODE: "xfastapi"
+    });
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new UndiciResponse(JSON.stringify({ data: [{ b64_json: validPng.toString("base64") }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new OpenAiImageAdapter(environment).generate({
+      requestId: "task-xfastapi",
+      model: {
+        id: "openai-image",
+        name: "GPT 生图",
+        provider: "openai",
+        enabled: true,
+        maxImageCount: 4,
+        supportedAspectRatios: ["9:16"]
+      },
+      requirement: { ...requirement, aspectRatio: "9:16" },
+      renderSettings: { resolutionPreset: "2k", providerQuality: "high" },
+      instruction,
+      sources: []
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.body).toBe(
+      JSON.stringify({
+        model: "gpt-image-2",
+        prompt: instruction,
+        n: 1,
+        size: "1152x2048",
+        quality: "high"
+      })
+    );
+  });
+
   it("submits and polls the asynchronous relay with stable idempotency", async () => {
     const environment = environmentSchema.parse({
       ...baseEnvironment,

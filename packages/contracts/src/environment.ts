@@ -47,7 +47,7 @@ export const environmentSchema = z.object({
   OPENAI_IMAGE_BASE_URL: z.url().default("https://api.openai.com/v1"),
   OPENAI_IMAGE_API_KEY: z.string().optional(),
   OPENAI_IMAGE_MODEL: z.string().min(1).default("gpt-image-2"),
-  OPENAI_IMAGE_API_MODE: z.enum(["official", "async-relay"]).default("official"),
+  OPENAI_IMAGE_API_MODE: z.enum(["official", "async-relay", "xfastapi"]).default("official"),
   BYTEDANCE_IMAGE_BASE_URL: z.url().default("https://ark.cn-beijing.volces.com/api/v3"),
   BYTEDANCE_IMAGE_API_KEY: z.string().optional(),
   BYTEDANCE_IMAGE_MODEL: z.string().optional(),

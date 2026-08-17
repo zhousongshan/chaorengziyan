@@ -25,7 +25,7 @@ describe("model settings env file", () => {
     expect(values.SUBJECT_INSPECTION_AI_API_KEY).toBe("vision-secret");
     expect(values.REQUIREMENT_AI_MODEL).toBe("gpt-5.6-sol");
     expect(values.OPENAI_IMAGE_MODEL).toBe("gpt-image-2");
-    expect(values.OPENAI_IMAGE_API_MODE).toBe("async-relay");
+    expect(values.OPENAI_IMAGE_API_MODE).toBe("xfastapi");
     expect(values.SUBJECT_INSPECTION_AI_MODEL).toBe("gpt-5.6-sol");
     expect(values.ENABLED_IMAGE_MODELS).toBe("openai-image");
   });

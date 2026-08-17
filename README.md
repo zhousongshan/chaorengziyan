@@ -147,18 +147,20 @@ curl http://127.0.0.1:3001/api/v1/image-generations/<taskId>
 
 ### 3. 配置真实生图服务
 
-Jenny API 异步图片接口：
+xfastapi.ai 同步 OpenAI 兼容图片接口：
 
 ```dotenv
-OPENAI_IMAGE_BASE_URL=https://jennyapi.site/v1
+OPENAI_IMAGE_BASE_URL=https://xfastapi.ai
 OPENAI_IMAGE_API_KEY=your-key
 OPENAI_IMAGE_MODEL=gpt-image-2
-OPENAI_IMAGE_API_MODE=async-relay
+OPENAI_IMAGE_API_MODE=xfastapi
 IMAGE_GENERATION_TIMEOUT_MS=300000
 ```
 
-该模式会固定单张提交，携带幂等键，并轮询
-`/images/generations/result`；多张图片由 Worker 拆成多个中转任务顺序获取。
+该模式使用标准 `images/generations` 和 `images/edits` 接口，结果直接读取
+`b64_json`。多张图片仍由 Worker 按输出单元独立生成，参考图会通过编辑接口上传。
+
+旧的 Jenny 异步中转仍可通过 `OPENAI_IMAGE_API_MODE=async-relay` 保留，但不再是默认配置。
 
 字节火山方舟图片接口：
 
