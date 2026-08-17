@@ -2,13 +2,10 @@ import { Inject, Injectable } from "@nestjs/common";
 import { eq } from "drizzle-orm";
 
 import { requirementRuns, type DatabaseConnection } from "@chaoren/database";
-import {
-  requirementResultSchema,
-  resolveRequirementRequestSchema,
-  resolvedGenerationPlanSchema
-} from "@chaoren/contracts";
+import { requirementResultSchema, resolveRequirementRequestSchema } from "@chaoren/contracts";
 
 import { DATABASE_CONNECTION } from "../database/database.constants.js";
+import { parsePersistedGenerationPlan } from "../persistence/persisted-generation-plan.js";
 import type {
   RequirementRunRecord,
   RequirementRunRepository
@@ -55,9 +52,7 @@ export class DrizzleRequirementRunRepository implements RequirementRunRepository
           userId: row.userId,
           request: resolveRequirementRequestSchema.parse(row.request),
           result: requirementResultSchema.parse(row.result),
-          executionPlan: row.executionPlan
-            ? resolvedGenerationPlanSchema.parse(row.executionPlan)
-            : null,
+          executionPlan: row.executionPlan ? parsePersistedGenerationPlan(row.executionPlan) : null,
           executionPlanHash: row.executionPlanHash,
           aiModel: row.aiModel,
           promptVersion: row.promptVersion,
@@ -65,4 +60,34 @@ export class DrizzleRequirementRunRepository implements RequirementRunRepository
         }
       : undefined;
   }
+
+  public async findPresentationContextById(id: string): Promise<
+    | {
+        parentRequirementRunId: string | null;
+        productImageCount: number;
+      }
+    | undefined
+  > {
+    const [row] = await this.connection.db
+      .select({
+        parentRequirementRunId: requirementRuns.parentRequirementRunId,
+        request: requirementRuns.request
+      })
+      .from(requirementRuns)
+      .where(eq(requirementRuns.id, id))
+      .limit(1);
+    if (!row) return undefined;
+    const request = asRecord(row.request);
+    const productImageIds = request?.productImageIds;
+    return {
+      parentRequirementRunId: row.parentRequirementRunId,
+      productImageCount: Array.isArray(productImageIds) ? productImageIds.length : 0
+    };
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }

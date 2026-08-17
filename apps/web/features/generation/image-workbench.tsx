@@ -432,7 +432,6 @@ export function ImageWorkbench() {
     }
     return [...tasks.values()];
   }, [sessionGenerationQueries]);
-  const sessionGenerationsReady = sessionGenerationQueries.every((query) => query.isSuccess);
 
   const activeSessionGenerationQuery = useQuery({
     queryKey: queryKeys.activeSessionGeneration(recoveredSessionId ?? "none"),
@@ -894,12 +893,15 @@ export function ImageWorkbench() {
   const generationMutation = useMutation({
     mutationFn: (input: { requirementRunId: string; newAttempt: boolean }) => {
       const storageKey = `image-generation-idempotency:${input.requirementRunId}`;
-      if (input.newAttempt) sessionStorage.removeItem(storageKey);
-      let idempotencyKey = sessionStorage.getItem(storageKey);
-      if (!idempotencyKey) {
-        idempotencyKey = crypto.randomUUID();
-        sessionStorage.setItem(storageKey, idempotencyKey);
+      if (!input.newAttempt) {
+        return apiClient.createImageGeneration({
+          requirementRunId: input.requirementRunId,
+          idempotencyKey: input.requirementRunId
+        });
       }
+      sessionStorage.removeItem(storageKey);
+      const idempotencyKey = crypto.randomUUID();
+      sessionStorage.setItem(storageKey, idempotencyKey);
       return apiClient.createImageGeneration({
         requirementRunId: input.requirementRunId,
         idempotencyKey
@@ -1053,7 +1055,6 @@ export function ImageWorkbench() {
       activeGenerationTask ||
       recoveredTaskId ||
       generationMutation.isPending ||
-      !sessionGenerationsReady ||
       !generationServiceReady ||
       automaticGenerationRef.current === activeRequirementResponse.requirementRunId
     ) {
@@ -1069,8 +1070,7 @@ export function ImageWorkbench() {
     activeRequirementResponse,
     generationMutation,
     generationServiceReady,
-    recoveredTaskId,
-    sessionGenerationsReady
+    recoveredTaskId
   ]);
 
   const generationStatus = generationQuery.data?.workflowStatus ?? generationQuery.data?.status;
@@ -1187,13 +1187,10 @@ export function ImageWorkbench() {
     queryError(promptOptimizationQuery.error) ||
     queryError(generationQuery.error) ||
     queryError(subjectChecksQuery.error) ||
-    queryError(activeSessionGenerationQuery.error) ||
-    sessionGenerationQueries
-      .map((query) => queryError(query.error))
-      .find((message) => Boolean(message)) ||
-    historicalSubjectQueries
-      .map((query) => queryError(query.error))
-      .find((message) => Boolean(message));
+    queryError(activeSessionGenerationQuery.error);
+  const historicalDataUnavailable =
+    sessionGenerationQueries.some((query) => query.isError) ||
+    historicalSubjectQueries.some((query) => query.isError);
 
   useLayoutEffect(() => {
     const restore = historyScrollRestoreRef.current;
@@ -1755,6 +1752,12 @@ export function ImageWorkbench() {
                     <span>已加载全部记录</span>
                   ) : null}
                 </div>
+                {historicalDataUnavailable && (
+                  <p className={normalModeStyles.inlineError} role="status">
+                    <CircleAlert />
+                    部分历史生成记录暂时无法读取，当前创作不受影响。
+                  </p>
+                )}
                 <ConversationThread
                   agentName={normalModeProfile.name}
                   messages={conversationHistory?.messages ?? []}

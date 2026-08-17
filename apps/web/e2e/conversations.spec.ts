@@ -159,9 +159,11 @@ test("async-state unlocks after REST reports idle despite stale running history 
 }) => {
   const state = await mockStaleRunningGenerationApi(page);
   const consoleErrors: string[] = [];
+  const failedRequests: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
+  page.on("requestfailed", (request) => failedRequests.push(request.url()));
   await login(page);
 
   await page.goto(
@@ -186,6 +188,7 @@ test("async-state unlocks after REST reports idle despite stale running history 
   await expect(page.getByRole("button", { name: "发送" })).toBeVisible();
   await expect(prompt).toBeEnabled();
   await expect(page.getByRole("button", { name: "生成中" })).toHaveCount(0);
+  expect(failedRequests).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
 
@@ -701,6 +704,70 @@ async function mockStaleRunningGenerationApi(page: Page) {
       }
     }
   };
+
+  await page.route("**/api/v1/health/ready", (route) =>
+    fulfillJson(route, {
+      status: "ready",
+      service: "chaoren-api",
+      timestamp: "2026-08-10T08:00:00.000Z",
+      nodeVersion: "24.19.0",
+      checks: { database: true, databaseSchema: true, redis: true, imageWorker: true }
+    })
+  );
+  await page.route("**/api/v1/projects/current", (route) =>
+    fulfillJson(route, {
+      id: projectId,
+      name: "异步状态测试项目",
+      description: null,
+      createdAt: "2026-08-10T08:00:00.000Z",
+      updatedAt: "2026-08-10T08:00:00.000Z"
+    })
+  );
+  await page.route(`**/api/v1/agents/${agentId}`, (route) =>
+    fulfillJson(route, {
+      id: agentId,
+      name: "家居推广图 Agent",
+      description: "异步状态测试 Agent",
+      agentInstruction: "",
+      type: "image",
+      mode: "intelligent",
+      origin: "custom",
+      createdAt: "2026-08-10T08:00:00.000Z",
+      updatedAt: "2026-08-10T08:00:00.000Z"
+    })
+  );
+  await page.route("**/api/v1/agents?*", (route) =>
+    fulfillJson(route, {
+      items: [
+        {
+          id: agentId,
+          name: "家居推广图 Agent",
+          description: "异步状态测试 Agent",
+          agentInstruction: "",
+          type: "image",
+          mode: "intelligent",
+          origin: "custom",
+          createdAt: "2026-08-10T08:00:00.000Z",
+          updatedAt: "2026-08-10T08:00:00.000Z"
+        }
+      ],
+      pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 }
+    })
+  );
+  await page.route("**/api/v1/image-models", (route) =>
+    fulfillJson(route, {
+      models: [
+        {
+          id: "test-model",
+          name: "测试生图模型",
+          provider: "openai",
+          enabled: true,
+          maxImageCount: 4,
+          supportedAspectRatios: ["1:1", "3:4", "4:3", "9:16", "16:9"]
+        }
+      ]
+    })
+  );
 
   await page.route("**/api/v1/conversations**", async (route) => {
     const url = new URL(route.request().url());

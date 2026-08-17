@@ -74,6 +74,12 @@ export const conversationTurnRunStatus = pgEnum("conversation_turn_run_status", 
   "completed",
   "failed"
 ]);
+export const generationStartRequestStatus = pgEnum("generation_start_request_status", [
+  "pending",
+  "processing",
+  "dispatched",
+  "failed"
+]);
 export const productEntityStatus = pgEnum("product_entity_status", ["active", "retired"]);
 export const productEntityLineageStatus = pgEnum("product_entity_lineage_status", [
   "trusted",
@@ -322,6 +328,35 @@ export const requirementRuns = pgTable(
     index("requirement_runs_user_id_idx").on(table.userId),
     index("requirement_runs_project_id_idx").on(table.projectId),
     index("requirement_runs_session_id_idx").on(table.sessionId)
+  ]
+);
+
+export const generationStartRequests = pgTable(
+  "generation_start_requests",
+  {
+    requirementRunId: uuid("requirement_run_id")
+      .primaryKey()
+      .references(() => requirementRuns.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull(),
+    sessionId: uuid("session_id").references(() => conversationSessions.id, {
+      onDelete: "set null"
+    }),
+    idempotencyKey: uuid("idempotency_key").notNull(),
+    status: generationStartRequestStatus("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    availableAt: timestamp("available_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseToken: uuid("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    lastErrorMessage: text("last_error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true })
+  },
+  (table) => [
+    uniqueIndex("generation_start_requests_idempotency_uidx").on(table.idempotencyKey),
+    index("generation_start_requests_status_available_idx").on(table.status, table.availableAt),
+    index("generation_start_requests_session_idx").on(table.sessionId)
   ]
 );
 

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { emptyConversationState } from "@chaoren/contracts";
 
 import { parsePersistedConversationState } from "../src/conversations/persisted-conversation-state.js";
+import {
+  parseExecutableGenerationPlan,
+  parsePersistedGenerationPlan
+} from "../src/persistence/persisted-generation-plan.js";
 
 const productAssetId = "00000000-0000-4000-8000-000000000001";
 
@@ -88,5 +92,18 @@ describe("parsePersistedConversationState", () => {
         }
       })
     ).toThrow();
+  });
+});
+
+describe("persisted generation plan boundaries", () => {
+  it("allows early v3 only through the persisted read boundary", () => {
+    const earlyV3 = {
+      schemaVersion: "3.0",
+      summary: "早期 v3 计划",
+      groups: [commonGroup]
+    };
+
+    expect(parsePersistedGenerationPlan(earlyV3)).toMatchObject({ schemaVersion: "2.0" });
+    expect(() => parseExecutableGenerationPlan(earlyV3)).toThrow();
   });
 });

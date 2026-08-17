@@ -18,4 +18,22 @@ export class InMemoryRequirementRunRepository implements RequirementRunRepositor
     const record = this.records.get(id);
     return Promise.resolve(record ? structuredClone(record) : undefined);
   }
+
+  public findPresentationContextById(id: string): Promise<
+    | {
+        parentRequirementRunId: string | null;
+        productImageCount: number;
+      }
+    | undefined
+  > {
+    const record = this.records.get(id);
+    return Promise.resolve(
+      record
+        ? {
+            parentRequirementRunId: record.parentRequirementRunId ?? null,
+            productImageCount: record.request.productImageIds.length
+          }
+        : undefined
+    );
+  }
 }

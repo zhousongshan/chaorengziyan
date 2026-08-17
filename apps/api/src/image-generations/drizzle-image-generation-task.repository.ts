@@ -856,6 +856,24 @@ export class DrizzleImageGenerationTaskRepository implements ImageGenerationTask
     };
   }
 
+  public async findByRequirementRunId(
+    requirementRunId: string,
+    userId: string
+  ): Promise<ImageGenerationTaskRecord | undefined> {
+    const [row] = await this.connection.db
+      .select({ id: generationTasks.id })
+      .from(generationTasks)
+      .where(
+        and(
+          eq(generationTasks.requirementRunId, requirementRunId),
+          eq(generationTasks.userId, userId)
+        )
+      )
+      .orderBy(desc(generationTasks.createdAt))
+      .limit(1);
+    return row ? this.findById(row.id) : undefined;
+  }
+
   public async findByIdempotencyKey(
     userId: string,
     idempotencyKey: string

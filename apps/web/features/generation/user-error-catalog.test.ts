@@ -13,6 +13,14 @@ describe("user error catalog", () => {
     expect(presentUserErrorCode("INVALID_GENERATED_IMAGE_CONTENT").action).toBe("retry");
   });
 
+  it("distinguishes provider quota exhaustion from authentication and access errors", () => {
+    expect(presentUserErrorCode("IMAGE_PROVIDER_QUOTA_EXHAUSTED")).toMatchObject({
+      title: "生图服务额度不足",
+      action: "contact_support",
+      retryable: false
+    });
+  });
+
   it("does not expose unknown backend errors", () => {
     expect(presentUserErrorCode("SOME_PROVIDER_INTERNAL_502")).toEqual({
       title: "任务处理失败",

@@ -38,6 +38,51 @@ const validPng = Buffer.from(
 afterEach(() => vi.unstubAllGlobals());
 
 describe("image provider adapters", () => {
+  it("classifies a structured relay quota rejection separately from permission errors", async () => {
+    const environment = environmentSchema.parse({
+      ...baseEnvironment,
+      OPENAI_IMAGE_BASE_URL: "https://jennyapi.site/v1",
+      OPENAI_IMAGE_API_KEY: "test-relay-key",
+      OPENAI_IMAGE_MODEL: "gpt-image-2",
+      OPENAI_IMAGE_API_MODE: "async-relay"
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new UndiciResponse(
+            JSON.stringify({
+              code: "insufficient_user_quota",
+              message: "provider balance is insufficient"
+            }),
+            { status: 403, headers: { "content-type": "application/json" } }
+          )
+        )
+      )
+    );
+
+    await expect(
+      new OpenAiImageAdapter(environment).generate({
+        requestId: "quota-task",
+        model: {
+          id: "openai-image",
+          name: "GPT 生图",
+          provider: "openai",
+          enabled: true,
+          maxImageCount: 4,
+          supportedAspectRatios: ["1:1"]
+        },
+        requirement,
+        renderSettings,
+        instruction,
+        sources: []
+      })
+    ).rejects.toMatchObject({
+      code: "IMAGE_PROVIDER_QUOTA_EXHAUSTED",
+      details: { stage: "submission", retryable: false }
+    } satisfies Partial<ImageProviderError>);
+  });
+
   it("classifies relay access denial and preserves bounded diagnostics", async () => {
     const environment = environmentSchema.parse({
       ...baseEnvironment,

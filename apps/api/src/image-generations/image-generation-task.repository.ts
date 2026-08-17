@@ -93,6 +93,10 @@ export interface ImageGenerationTaskRepository {
     created: boolean;
   }>;
   findById(id: string): Promise<ImageGenerationTaskRecord | undefined>;
+  findByRequirementRunId(
+    requirementRunId: string,
+    userId: string
+  ): Promise<ImageGenerationTaskRecord | undefined>;
   findByIdempotencyKey(
     userId: string,
     idempotencyKey: string

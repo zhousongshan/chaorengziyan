@@ -136,6 +136,19 @@ export class InMemoryImageGenerationTaskRepository implements ImageGenerationTas
     return Promise.resolve(record ? structuredClone(record) : undefined);
   }
 
+  public findByRequirementRunId(
+    requirementRunId: string,
+    userId: string
+  ): Promise<ImageGenerationTaskRecord | undefined> {
+    const record = [...this.records.values()]
+      .filter(
+        (candidate) =>
+          candidate.requirementRunId === requirementRunId && candidate.userId === userId
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    return Promise.resolve(record ? structuredClone(record) : undefined);
+  }
+
   public findByIdempotencyKey(
     userId: string,
     idempotencyKey: string

@@ -25,4 +25,11 @@ export interface RequirementRunRecord {
 export interface RequirementRunRepository {
   save(record: RequirementRunRecord): Promise<void>;
   findById(id: string): Promise<RequirementRunRecord | undefined>;
+  findPresentationContextById(id: string): Promise<
+    | {
+        parentRequirementRunId: string | null;
+        productImageCount: number;
+      }
+    | undefined
+  >;
 }

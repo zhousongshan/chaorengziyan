@@ -237,6 +237,13 @@ const userErrorCatalog: Record<string, UserErrorPresentation> = {
     actionLabel: "联系管理员",
     retryable: false
   },
+  IMAGE_PROVIDER_QUOTA_EXHAUSTED: {
+    title: "生图服务额度不足",
+    message: "当前供应商账户余额不足，请充值后重新生成。",
+    action: "contact_support",
+    actionLabel: "联系管理员",
+    retryable: false
+  },
   IMAGE_PROVIDER_UNAVAILABLE: {
     title: "生图服务暂时不可用",
     message: "请稍后重新生成。",

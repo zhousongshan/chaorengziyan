@@ -429,10 +429,14 @@ export class ConversationService {
       });
       const requirementRunId = resolution.output.action === "generate" ? randomUUID() : null;
       const snapshotId = randomUUID();
+      const assistantContent =
+        resolution.output.action === "generate"
+          ? "需求已确认，正在创建生成任务。"
+          : resolution.output.assistantReply;
       const turnMemory = buildTurnMemory({
         turnNumber: activeMessage.turnNumber,
         userText: request.text,
-        assistantText: resolution.output.assistantReply,
+        assistantText: assistantContent,
         changedFields: resolution.output.changedFields,
         assetIds: relevantAssets.map((asset) => asset.assetId),
         action: resolution.output.action,
@@ -445,7 +449,7 @@ export class ConversationService {
         sourceMessageId: messageId,
         leaseToken: run.leaseToken,
         assistantMessageId: randomUUID(),
-        assistantContent: resolution.output.assistantReply,
+        assistantContent,
         snapshotId,
         baseVersion: session.version,
         turnNumber: activeMessage.turnNumber,

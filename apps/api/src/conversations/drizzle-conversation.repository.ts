@@ -9,6 +9,7 @@ import {
   conversationSessions,
   conversationStateSnapshots,
   conversationTurnRuns,
+  generationStartRequests,
   generationTaskOutputs,
   mediaAssets,
   promptOptimizations,
@@ -1123,6 +1124,15 @@ export class DrizzleConversationRepository implements ConversationRepository {
           aiModel: input.requirementRun.aiModel,
           promptVersion: input.requirementRun.promptVersion,
           createdAt: now
+        });
+        await tx.insert(generationStartRequests).values({
+          requirementRunId: input.requirementRun.id,
+          userId: input.userId,
+          sessionId: input.sessionId,
+          idempotencyKey: input.requirementRun.id,
+          status: "pending",
+          createdAt: now,
+          updatedAt: now
         });
       }
       await tx

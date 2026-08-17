@@ -431,6 +431,8 @@ function userSafeGenerationMessage(code: string): string {
     case "IMAGE_PROVIDER_AUTH_FAILED":
     case "IMAGE_PROVIDER_ACCESS_DENIED":
       return "生图服务鉴权或访问权限异常，请联系管理员";
+    case "IMAGE_PROVIDER_QUOTA_EXHAUSTED":
+      return "生图服务额度不足，请联系管理员充值后重新生成";
     case "IMAGE_PROVIDER_NOT_SUPPORTED":
     case "IMAGE_MODEL_NOT_AVAILABLE":
       return "所选生图模型当前不可用，请更换模型或联系管理员";

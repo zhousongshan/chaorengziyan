@@ -267,6 +267,13 @@
       "when": 1786679374281,
       "tag": "0037_lame_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786929502312,
+      "tag": "0038_sloppy_wendigo",
+      "breakpoints": true
     }
   ]
 }

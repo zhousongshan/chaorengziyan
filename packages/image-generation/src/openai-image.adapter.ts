@@ -344,7 +344,7 @@ export class OpenAiImageAdapter implements ImageProviderAdapter {
     if (!response.ok) {
       const responseBody = await response.text().catch(() => "");
       throw new ImageProviderError(
-        imageProviderHttpErrorCode(response.status, errorCode),
+        imageProviderHttpErrorCode(response.status, errorCode, responseBody),
         `中转生图服务请求失败，状态码 ${response.status}`,
         {
           stage,
@@ -407,13 +407,36 @@ export class OpenAiImageAdapter implements ImageProviderAdapter {
   }
 }
 
-function imageProviderHttpErrorCode(status: number, fallback: string): string {
+function imageProviderHttpErrorCode(status: number, fallback: string, responseBody = ""): string {
+  if (isProviderQuotaError(responseBody)) return "IMAGE_PROVIDER_QUOTA_EXHAUSTED";
   if (status === 401) return "IMAGE_PROVIDER_AUTH_FAILED";
   if (status === 403) return "IMAGE_PROVIDER_ACCESS_DENIED";
   if (status === 408) return "IMAGE_PROVIDER_TIMEOUT";
   if (status === 429) return "IMAGE_PROVIDER_RATE_LIMITED";
   if (status >= 500) return "IMAGE_PROVIDER_UNAVAILABLE";
   return fallback;
+}
+
+function isProviderQuotaError(responseBody: string): boolean {
+  if (!responseBody.trim()) return false;
+  try {
+    const body = JSON.parse(responseBody) as unknown;
+    if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+    const record = body as Record<string, unknown>;
+    const nestedError =
+      record.error && typeof record.error === "object" && !Array.isArray(record.error)
+        ? (record.error as Record<string, unknown>)
+        : undefined;
+    const code = typeof record.code === "string" ? record.code : nestedError?.code;
+    return (
+      typeof code === "string" &&
+      new Set(["insufficient_user_quota", "insufficient_quota", "billing_hard_limit_reached"]).has(
+        code.toLowerCase()
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 function extensionFor(mimeType: string): string {

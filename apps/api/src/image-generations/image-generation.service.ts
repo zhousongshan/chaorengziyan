@@ -3,9 +3,12 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
   type OnModuleDestroy,
   type OnModuleInit
@@ -57,13 +60,20 @@ import {
   type ImageGenerationTaskRecord,
   type ImageGenerationTaskRepository
 } from "./image-generation-task.repository.js";
+import {
+  GENERATION_START_REQUEST_REPOSITORY,
+  type GenerationStartRequestRepository
+} from "./generation-start-request.repository.js";
 
 type CurrentGenerationPlan = Extract<ResolvedGenerationPlan, { schemaVersion: "3.0" }>;
 
 @Injectable()
 export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ImageGenerationService.name);
   private dispatchTimer?: NodeJS.Timeout;
+  private startRequestTimer?: NodeJS.Timeout;
   private dispatching = false;
+  private startRequestDispatching = false;
   public constructor(
     @Inject(ENVIRONMENT) private readonly environment: Environment,
     @Inject(AUTHORIZATION_PORT) private readonly authorization: AuthorizationPort,
@@ -73,7 +83,10 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
     @Inject(IMAGE_GENERATION_TASK_REPOSITORY)
     private readonly tasks: ImageGenerationTaskRepository,
     private readonly imageModels: ImageModelCatalog,
-    private readonly mediaAssets: MediaAssetService
+    private readonly mediaAssets: MediaAssetService,
+    @Optional()
+    @Inject(GENERATION_START_REQUEST_REPOSITORY)
+    private readonly startRequests?: GenerationStartRequestRepository
   ) {}
 
   public async onModuleInit(): Promise<void> {
@@ -86,10 +99,16 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
       this.dispatchTimer = setInterval(() => void this.dispatchPendingEvents(), 2_000);
       this.dispatchTimer.unref();
     }
+    if (this.startRequests) {
+      await this.dispatchPendingStartRequests();
+      this.startRequestTimer = setInterval(() => void this.dispatchPendingStartRequests(), 2_000);
+      this.startRequestTimer.unref();
+    }
   }
 
   public onModuleDestroy(): void {
     if (this.dispatchTimer) clearInterval(this.dispatchTimer);
+    if (this.startRequestTimer) clearInterval(this.startRequestTimer);
   }
 
   public async create(rawRequest: unknown): Promise<CreateImageGenerationResponse> {
@@ -107,6 +126,15 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
     const run = await this.requirementRuns.findById(parsedRequest.data.requirementRunId);
     if (!run || run.userId !== this.environment.LOCAL_USER_ID) {
       throw new NotFoundException({ code: "REQUIREMENT_RUN_NOT_FOUND" });
+    }
+    if (parsedRequest.data.idempotencyKey === run.id) {
+      const automaticTask = await this.tasks.findByRequirementRunId(
+        run.id,
+        this.environment.LOCAL_USER_ID
+      );
+      if (automaticTask) {
+        return { taskId: automaticTask.taskId, status: automaticTask.status };
+      }
     }
     if (run.result.status !== "ready") {
       throw new ConflictException({
@@ -260,6 +288,68 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
       });
     }
     return { taskId: task.taskId, status: task.status };
+  }
+
+  private async dispatchPendingStartRequests(): Promise<void> {
+    if (!this.startRequests || this.startRequestDispatching) return;
+    this.startRequestDispatching = true;
+    try {
+      const requests = await this.startRequests.claimPending({
+        now: new Date(),
+        leaseDurationMs: 60_000,
+        limit: 20
+      });
+      await Promise.allSettled(requests.map((request) => this.dispatchStartRequest(request)));
+    } catch (error) {
+      this.logger.warn(
+        `生成启动请求扫描失败: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      this.startRequestDispatching = false;
+    }
+  }
+
+  private async dispatchStartRequest(request: {
+    requirementRunId: string;
+    idempotencyKey: string;
+    leaseToken: string;
+    attemptCount: number;
+  }): Promise<void> {
+    if (!this.startRequests) return;
+    try {
+      const existing = await this.tasks.findByRequirementRunId(
+        request.requirementRunId,
+        this.environment.LOCAL_USER_ID
+      );
+      if (!existing) {
+        await this.create({
+          requirementRunId: request.requirementRunId,
+          idempotencyKey: request.idempotencyKey
+        });
+      }
+      await this.startRequests.markDispatched(request.requirementRunId, request.leaseToken);
+    } catch (error) {
+      const code = errorCode(error);
+      const message = errorMessage(error);
+      if (isRetryableStartError(code)) {
+        const delayMs = Math.min(60_000, 2 ** Math.min(request.attemptCount, 6) * 1_000);
+        await this.startRequests.markRetry({
+          requirementRunId: request.requirementRunId,
+          leaseToken: request.leaseToken,
+          availableAt: new Date(Date.now() + delayMs),
+          errorCode: code,
+          errorMessage: message
+        });
+      } else {
+        await this.startRequests.markFailed({
+          requirementRunId: request.requirementRunId,
+          leaseToken: request.leaseToken,
+          errorCode: code,
+          errorMessage: message
+        });
+      }
+      this.logger.error(`生成任务启动失败 [${request.requirementRunId}] ${code}: ${message}`);
+    }
   }
 
   private async dispatchPendingEvents(): Promise<void> {
@@ -627,9 +717,11 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
 
   private async toResponse(task: ImageGenerationTaskRecord): Promise<ImageGenerationTask> {
     const units = task.units ?? [];
-    const requirementRun = await this.requirementRuns.findById(task.requirementRunId);
+    const requirementContext = await this.requirementRuns.findPresentationContextById(
+      task.requirementRunId
+    );
     const isRepairGeneration = Boolean(
-      requirementRun?.parentRequirementRunId && !task.regeneratedFrom
+      requirementContext?.parentRequirementRunId && !task.regeneratedFrom
     );
     const deliverableAssetIds = units.flatMap((unit) =>
       unit.deliverableAsset ? [unit.deliverableAsset.id] : []
@@ -678,9 +770,7 @@ export class ImageGenerationService implements OnModuleInit, OnModuleDestroy {
       stageStartedAt: activeStageStarts[0] ?? task.updatedAt,
       subjectConsistencyRequired:
         outputs.some((output) => output.subjectConsistencyRequired) ||
-        Boolean(
-          units.length === 0 && requirementRun && requirementRun.request.productImageIds.length > 0
-        ),
+        Boolean(units.length === 0 && requirementContext?.productImageCount),
       status: task.status,
       workflowStatus,
       resultAssets: units.length > 0 ? deliverableAssets : task.resultAssets,
@@ -865,4 +955,47 @@ function appendBrandLogoSource(
       position: withoutPreviousLogo.length
     }
   ];
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (
+      response &&
+      typeof response === "object" &&
+      "code" in response &&
+      typeof response.code === "string"
+    ) {
+      return response.code;
+    }
+  }
+  return "GENERATION_START_FAILED";
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof HttpException) {
+    const response = error.getResponse();
+    if (
+      response &&
+      typeof response === "object" &&
+      "message" in response &&
+      typeof response.message === "string"
+    ) {
+      return response.message;
+    }
+  }
+  return error instanceof Error ? error.message : "生成任务启动失败";
+}
+
+function isRetryableStartError(code: string): boolean {
+  return !new Set([
+    "INVALID_IMAGE_GENERATION_REQUEST",
+    "REQUIREMENT_RUN_NOT_FOUND",
+    "REQUIREMENT_NEEDS_CLARIFICATION",
+    "REQUIREMENT_MODEL_CONSTRAINT_CHANGED",
+    "GENERATION_PLAN_VERSION_UNSUPPORTED",
+    "GENERATION_PLAN_OUTPUT_COUNT_MISMATCH",
+    "GENERATION_PLAN_CONTEXT_CONFLICT",
+    "QUALITY_ENTITY_LINEAGE_INVALID"
+  ]).has(code);
 }

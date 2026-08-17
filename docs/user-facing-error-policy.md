@@ -22,6 +22,7 @@
 | 生图供应商不可用         | 生图服务暂时不可用       | 重新生成           |
 | 生图超时                 | 本次生成等待时间过长     | 重新生成           |
 | 生图限流                 | 当前生图任务较多         | 稍后重试           |
+| 生图供应商额度不足       | 生图服务额度不足         | 联系管理员充值     |
 | 生图未配置               | 生图服务当前不可用       | 联系管理员         |
 | 返回无效图片             | 生图服务返回的图片无效   | 重新生成           |
 | 商品原图无效             | 商品图片无法读取         | 更换图片           |
@@ -42,6 +43,7 @@
 | `REQUIREMENT_AI_AUTH_FAILED`            | 需求理解服务配置异常               | 联系管理员           |
 | `IMAGE_PROVIDER_AUTH_FAILED`            | 生图服务鉴权失败                   | 联系管理员           |
 | `IMAGE_PROVIDER_ACCESS_DENIED`          | 生图服务无访问权限                 | 联系管理员           |
+| `IMAGE_PROVIDER_QUOTA_EXHAUSTED`        | 生图服务额度不足                   | 联系管理员充值       |
 | `REQUIREMENT_AI_NOT_CONFIGURED`         | 需求理解服务尚未配置               | 联系管理员           |
 | `REQUIREMENT_AI_CAPABILITY_UNSUPPORTED` | 当前模型不支持图片或结构化需求理解 | 更换模型或联系管理员 |
 | `REQUIREMENT_AI_INVALID_RESPONSE`       | 需求理解结果未通过程序校验         | 重新尝试             |
@@ -56,3 +58,5 @@
 - 前端测试：`apps/web/features/generation/user-error-catalog.test.ts`
 
 新增错误代码时，必须同步更新错误目录和测试，禁止在页面组件中临时拼接另一套用户文案。
+
+供应商返回非成功 HTTP 状态时，不能只按 `401/403/429` 映射。程序应先解析供应商明确返回的结构化业务码；例如 `insufficient_user_quota` 必须归类为 `IMAGE_PROVIDER_QUOTA_EXHAUSTED`，不能误报为密钥或权限问题。只允许基于稳定字段判断，不得依赖供应商自然语言消息的模糊关键词。原始响应经过长度限制后只保存到后端诊断字段，不直接展示给用户。
